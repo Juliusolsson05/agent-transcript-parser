@@ -402,6 +402,85 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const reminderAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-8',
+    parentUuid: null,
+    sessionId: 'sess-9',
+    timestamp: '2026-04-13T12:08:00.000Z',
+    attachment: {
+      type: 'token_usage',
+      used: 1200,
+      total: 8000,
+      remaining: 6800,
+    },
+  }
+
+  const structuredCodex: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-13T12:09:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-10',
+        timestamp: '2026-04-13T12:09:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:09:01.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'cat report.json' }),
+        call_id: 'call-structured',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:09:02.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        call_id: 'call-structured',
+        output: [
+          { type: 'text', text: 'See attached report' },
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: 'ZmFrZQ==' },
+            title: 'report.pdf',
+          },
+        ],
+      },
+    },
+  ]
+
+  const reminderCodex = toCodex([reminderAttachment], { lossy: true })
+  const structuredClaude = toClaude(structuredCodex, { lossy: true })
+  const structuredResult = structuredClaude.find(entry => entry.type === 'user')
+  const structuredBlock = Array.isArray(structuredResult?.message?.content)
+    ? structuredResult?.message?.content[0]
+    : undefined
+
+  check(
+    'token_usage attachment emits assistant commentary',
+    reminderCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message === 'Token usage: 1200/8000; 6800 remaining.',
+    ),
+  )
+  check(
+    'structured Codex tool output survives as Claude rich tool_result content',
+    Boolean(
+      structuredBlock &&
+        structuredBlock.type === 'tool_result' &&
+        Array.isArray((structuredBlock as { content?: unknown }).content),
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

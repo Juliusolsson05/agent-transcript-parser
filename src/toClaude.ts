@@ -493,7 +493,7 @@ function mapFunctionCallOutput(
   line: CodexRolloutLine,
   payload: CodexFunctionCallOutputPayload,
 ): ClaudeEntry {
-  const { text, metadata } = normalizeOutput(payload.output)
+  const { text, metadata, richContent } = normalizeOutput(payload.output)
   const isError =
     metadata && typeof metadata.exit_code === 'number' && metadata.exit_code !== 0
   const callInfo = ctx.callInfo.get(payload.call_id)
@@ -527,7 +527,17 @@ function mapFunctionCallOutput(
   const block: ClaudeToolResultBlock = {
     type: 'tool_result',
     tool_use_id: payload.call_id,
-    content: text,
+    // Prefer Claude-native rich tool_result content when Codex gave us
+    // a structured array we can translate safely. This is especially
+    // important for non-text outputs like documents/images, which
+    // otherwise disappear into a plain-text summary even though Claude
+    // can store them natively inside tool_result.content.
+    //
+    // We intentionally fall back to plain text for error results. Claude
+    // enforces that `is_error` tool results contain only text content,
+    // so preserving a richer array there would create a transcript that
+    // looks fine locally but fails on the next resumed API call.
+    content: isError ? text : richContent ?? text,
     ...(isError ? { is_error: true } : {}),
     ...(metadata ? { codex: { metadata } } : {}),
   }
@@ -582,11 +592,38 @@ function mapCustomToolCallOutput(
   line: CodexRolloutLine,
   payload: CodexCustomToolCallOutputPayload,
 ): ClaudeEntry[] {
-  const { text, metadata } = normalizeOutput(payload.output)
+  const { text, metadata, richContent } = normalizeOutput(payload.output)
   const isError =
     metadata && typeof metadata.exit_code === 'number' && metadata.exit_code !== 0
   const name = payload.name ?? ctx.callInfo.get(payload.call_id)?.originalToolName ?? 'tool'
-  const out: ClaudeEntry[] = [
+  const out: ClaudeEntry[] = []
+
+  if (richContent && richContent.length > 0) {
+    // Custom tools do not have a clean Claude-native tool identity in our
+    // translated sessions, so we cannot rely on a tool_result block the
+    // same way we do for Bash. The next-best Claude-native construct for
+    // machine-readable payloads is a structured_output attachment, which
+    // Claude already persists for tools that return structured data.
+    out.push(
+      stamp(ctx, {
+        uuid: stableUuid([
+          ctx.sessionId,
+          ctx.index,
+          line.timestamp,
+          'custom_tool_call_output_attachment',
+          payload.call_id,
+        ]),
+        timestamp: line.timestamp,
+        type: 'attachment',
+        attachment: {
+          type: 'structured_output',
+          data: richContent,
+        },
+      }),
+    )
+  }
+
+  out.push(
     stamp(ctx, {
       uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'custom_tool_call_output', payload.call_id]),
       timestamp: line.timestamp,
@@ -601,7 +638,7 @@ function mapCustomToolCallOutput(
         ],
       },
     }),
-  ]
+  )
 
   if (name === 'apply_patch' && !isError) {
     const files = extractApplyPatchFiles(ctx.callInfo.get(payload.call_id)?.input)

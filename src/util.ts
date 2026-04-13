@@ -62,7 +62,11 @@ export function parseToolInput(raw: string): unknown {
  */
 export function normalizeOutput(
   raw: unknown,
-): { text: string; metadata?: Record<string, unknown> } {
+): {
+  text: string
+  metadata?: Record<string, unknown>
+  richContent?: Array<{ type: string; text?: string; [k: string]: unknown }>
+} {
   if (typeof raw === 'string') {
     // custom_tool_call_output often wraps JSON in the string — detect
     // and unwrap. Plain-string outputs (function_call_output) pass
@@ -87,14 +91,41 @@ export function normalizeOutput(
   }
   if (Array.isArray(raw)) {
     const parts: string[] = []
+    const richContent: Array<{ type: string; text?: string; [k: string]: unknown }> = []
     let metadata: Record<string, unknown> | undefined
     for (const item of raw as Array<Record<string, unknown>>) {
       if (typeof item.text === 'string') parts.push(item.text)
       if (item.metadata && typeof item.metadata === 'object') {
         metadata = item.metadata as Record<string, unknown>
       }
+      // Claude accepts richer tool_result.content arrays than a plain
+      // string: text, image, document, and search_result. Preserving
+      // those here lets Codex structured tool outputs survive as native
+      // Claude tool results instead of being flattened to lossy text.
+      //
+      // We keep this intentionally conservative: only pass through the
+      // small set of block types Claude explicitly handles. Unknown
+      // content item types still contribute their text to the fallback
+      // string but are not copied structurally, because inventing a
+      // Claude block type here would create transcripts that resume but
+      // later fail validation on the next API call.
+      if (typeof item.type === 'string') {
+        if (item.type === 'text' && typeof item.text === 'string') {
+          richContent.push({ type: 'text', text: item.text })
+        } else if (
+          item.type === 'image' ||
+          item.type === 'document' ||
+          item.type === 'search_result'
+        ) {
+          richContent.push(item as { type: string; text?: string; [k: string]: unknown })
+        }
+      }
     }
-    return { text: parts.join('\n'), metadata }
+    return {
+      text: parts.join('\n'),
+      metadata,
+      ...(richContent.length > 0 ? { richContent } : {}),
+    }
   }
   return { text: '' }
 }

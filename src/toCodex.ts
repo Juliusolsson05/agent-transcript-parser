@@ -436,6 +436,18 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (attachment.type === 'mcp_resource') {
     return mapMcpResourceAttachment(entry, attachment)
   }
+  if (
+    attachment.type === 'critical_system_reminder' ||
+    attachment.type === 'token_usage' ||
+    attachment.type === 'budget_usd' ||
+    attachment.type === 'output_token_usage' ||
+    attachment.type === 'verify_plan_reminder' ||
+    attachment.type === 'max_turns_reached' ||
+    attachment.type === 'compaction_reminder' ||
+    attachment.type === 'context_efficiency'
+  ) {
+    return mapReminderAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -632,6 +644,16 @@ function mapMcpResourceAttachment(
   return assistantCommentaryLines(
     entry.timestamp,
     `Loaded MCP resource from ${server}: ${label}.`,
+  )
+}
+
+function mapReminderAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  return assistantCommentaryLines(
+    entry.timestamp,
+    summarizeReminderAttachment(attachment),
   )
 }
 
@@ -932,6 +954,35 @@ function summarizeModeAttachment(attachment: Record<string, unknown>): string {
       return 'Exited auto mode.'
     default:
       return 'Mode update.'
+  }
+}
+
+function summarizeReminderAttachment(
+  attachment: Record<string, unknown>,
+): string {
+  switch (attachment.type) {
+    case 'critical_system_reminder':
+      return typeof attachment.content === 'string' && attachment.content.trim().length > 0
+        ? attachment.content
+        : 'Critical system reminder.'
+    case 'token_usage':
+      return `Token usage: ${attachment.used}/${attachment.total}; ${attachment.remaining} remaining.`
+    case 'budget_usd':
+      return `USD budget: $${attachment.used}/$${attachment.total}; $${attachment.remaining} remaining.`
+    case 'output_token_usage':
+      return attachment.budget == null
+        ? `Output tokens - turn: ${attachment.turn}; session: ${attachment.session}.`
+        : `Output tokens - turn: ${attachment.turn}/${attachment.budget}; session: ${attachment.session}.`
+    case 'verify_plan_reminder':
+      return 'Plan verification reminder.'
+    case 'max_turns_reached':
+      return `Maximum turns reached: ${attachment.turnCount}/${attachment.maxTurns}.`
+    case 'compaction_reminder':
+      return 'Auto-compaction reminder.'
+    case 'context_efficiency':
+      return 'Context efficiency reminder.'
+    default:
+      return 'System reminder.'
   }
 }
 
