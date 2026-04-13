@@ -688,8 +688,8 @@ Status:
 
 Known gaps:
 
-- Claude tool names like `Bash` are emitted back as generic Codex `function_call` unless `codex.kind` metadata is present
-- native Codex `local_shell_call` is not reconstructed from plain Claude `Bash` by default
+- native Codex `local_shell_call` reconstruction currently depends on a recoverable
+  command string in the Claude `Bash` input
 
 ### `system`
 
@@ -713,6 +713,23 @@ Current mapping:
 Status:
 
 - `passthrough`
+
+### `custom-title`
+
+Current mapping:
+
+- emits Codex `event_msg:thread_name_updated`
+
+Status:
+
+- `native-ish`
+
+Why this is worth doing:
+
+- this is the metadata dual of Codex `thread_name_updated`
+- Codex persists renames in rollout history, while Claude persists them as
+  session metadata lines
+- translating directly keeps rename metadata alive in lossy mode
 
 Biggest gap:
 
@@ -955,6 +972,8 @@ Currently strongest mappings:
 - Codex reasoning <-> Claude thinking
 - Codex shell-ish calls/results -> Claude `Bash` tool/result
 - Claude compact boundary -> Codex compacted
+- Codex thread renames <-> Claude custom titles
+- Claude `Bash` <-> Codex `local_shell_call`
 - Codex structured tool outputs -> Claude rich tool_result content when the
   block types are Claude-compatible
 

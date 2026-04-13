@@ -573,6 +573,29 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const claudeTitle: ClaudeEntry = {
+    type: 'custom-title',
+    uuid: 'title-1',
+    parentUuid: null,
+    sessionId: 'sess-title',
+    timestamp: '2026-04-13T12:13:00.000Z',
+    customTitle: 'claude custom title',
+  }
+
+  const codex = toCodex([claudeTitle], { lossy: true })
+  check(
+    'Claude custom-title emits Codex thread_name_updated event',
+    codex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'thread_name_updated' &&
+        (line.payload as { thread_name?: string | null }).thread_name ===
+          'claude custom title',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

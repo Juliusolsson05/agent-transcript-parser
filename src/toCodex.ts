@@ -278,6 +278,7 @@ function mapEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (entry.type === 'assistant') return mapAssistantEntry(entry)
   if (entry.type === 'system') return mapSystemEntry(entry)
   if (entry.type === 'attachment') return mapAttachmentEntry(entry)
+  if (entry.type === 'custom-title') return mapCustomTitleEntry(entry)
   // Unknown Claude entry types (permission-mode, file-history-snapshot,
   // attachment, last-prompt, queue-operation, progress, etc.) have no
   // native Codex form. Emit a passthrough line that carries the entry
@@ -461,6 +462,27 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   }
 
   return passthroughLine(entry)
+}
+
+function mapCustomTitleEntry(entry: ClaudeEntry): CodexRolloutLine[] {
+  const title = typeof entry.customTitle === 'string' ? entry.customTitle.trim() : ''
+  if (!title) return passthroughLine(entry)
+
+  // This is the exact metadata dual of the reverse mapping in toClaude:
+  // Codex persists user-visible thread renames as `thread_name_updated`
+  // events, while Claude persists them as `custom-title` entries.
+  // Translating directly preserves rename/resume metadata on both sides
+  // instead of burying the title in a sidecar that lossy mode drops.
+  return [
+    {
+      timestamp: entry.timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'thread_name_updated',
+        thread_name: title,
+      },
+    },
+  ]
 }
 
 function mapQueuedCommandAttachment(
