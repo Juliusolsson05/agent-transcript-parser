@@ -28,6 +28,8 @@ import type {
   CodexResponseItemPayload,
   CodexRolloutLine,
   CodexSessionMetaPayload,
+  CodexToolSearchCallPayload,
+  CodexToolSearchOutputPayload,
   CodexTurnContextPayload,
   CodexWebSearchCallPayload,
 } from './types.js'
@@ -388,6 +390,10 @@ function mapResponseItem(
       ]
     case 'web_search_call':
       return [mapWebSearchCall(ctx, line, payload as CodexWebSearchCallPayload)]
+    case 'tool_search_call':
+      return [mapToolSearchCall(ctx, line, payload as CodexToolSearchCallPayload)]
+    case 'tool_search_output':
+      return mapToolSearchOutput(ctx, line, payload as CodexToolSearchOutputPayload)
     default:
       return mapUnknown(ctx, line)
   }
@@ -777,6 +783,127 @@ function mapWebSearchCall(
     type: 'assistant',
     message: { role: 'assistant', content: [block] },
   })
+}
+
+function mapToolSearchCall(
+  ctx: Ctx,
+  line: CodexRolloutLine,
+  payload: CodexToolSearchCallPayload,
+): ClaudeEntry {
+  const args = isRecord(payload.arguments) ? payload.arguments : {}
+  const query = typeof args.query === 'string' ? args.query.trim() : ''
+  const limit =
+    typeof args.limit === 'number' || typeof args.limit === 'string'
+      ? String(args.limit)
+      : undefined
+  const details = [
+    query ? `Query: ${query}` : null,
+    limit ? `Limit: ${limit}` : null,
+    payload.execution ? `Execution: ${payload.execution}` : null,
+  ]
+    .filter((part): part is string => part !== null)
+    .join('\n')
+
+  // Codex persists tool-search discovery as first-class response items
+  // because later turns can rely on that discovered tool inventory.
+  // Claude has no equivalent search-tool transcript shape, so the
+  // least-wrong lossy translation is a visible assistant summary that
+  // records that discovery happened and what was searched for.
+  return stamp(ctx, {
+    uuid: stableUuid([
+      ctx.sessionId,
+      ctx.index,
+      line.timestamp,
+      'tool_search_call',
+      payload.call_id ?? '',
+    ]),
+    timestamp: line.timestamp,
+    type: 'assistant',
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: details
+            ? `Searched available tools.\n${details}`
+            : 'Searched available tools.',
+        },
+      ],
+    },
+  })
+}
+
+function mapToolSearchOutput(
+  ctx: Ctx,
+  line: CodexRolloutLine,
+  payload: CodexToolSearchOutputPayload,
+): ClaudeEntry[] {
+  const tools = Array.isArray(payload.tools) ? payload.tools : []
+  const names = tools
+    .filter(isRecord)
+    .map(tool => {
+      const name = typeof tool.name === 'string' ? tool.name : ''
+      const description = typeof tool.description === 'string' ? tool.description : ''
+      return description ? `${name}: ${description}` : name
+    })
+    .filter(Boolean)
+  const summaryParts = [
+    `Tool search returned ${tools.length} result${tools.length === 1 ? '' : 's'}.`,
+    payload.execution ? `Execution: ${payload.execution}.` : null,
+    names.length > 0 ? `Top matches:\n${names.slice(0, 10).join('\n')}` : null,
+  ].filter((part): part is string => part !== null)
+
+  const out: ClaudeEntry[] = []
+
+  // Claude does persist structured_output attachments even though they are
+  // usually null-rendering in the UI. That makes them a good stash point for
+  // the discovered tool inventory itself: the resumed model can still inspect
+  // the raw tool list, while the human-visible transcript only shows a compact
+  // summary instead of dumping every schema inline.
+  if (tools.length > 0) {
+    out.push(
+      stamp(ctx, {
+        uuid: stableUuid([
+          ctx.sessionId,
+          ctx.index,
+          line.timestamp,
+          'tool_search_output_attachment',
+          payload.call_id ?? '',
+        ]),
+        timestamp: line.timestamp,
+        type: 'attachment',
+        attachment: {
+          type: 'structured_output',
+          data: tools,
+        },
+      }),
+    )
+  }
+
+  out.push(
+    stamp(ctx, {
+      uuid: stableUuid([
+        ctx.sessionId,
+        ctx.index,
+        line.timestamp,
+        'tool_search_output',
+        payload.call_id ?? '',
+      ]),
+      timestamp: line.timestamp,
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: summaryParts.join('\n\n'),
+          },
+        ],
+      },
+    }),
+  )
+
+  return out
 }
 
 // ---------------------------------------------------------------------------

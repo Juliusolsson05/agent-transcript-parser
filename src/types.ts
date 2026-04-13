@@ -216,6 +216,22 @@ export type CodexWebSearchCallPayload = {
   action?: { type: string; query?: string; [k: string]: unknown }
 }
 
+export type CodexToolSearchCallPayload = {
+  type: 'tool_search_call'
+  call_id?: string
+  status?: string
+  execution?: string
+  arguments?: unknown
+}
+
+export type CodexToolSearchOutputPayload = {
+  type: 'tool_search_output'
+  call_id?: string
+  status?: string
+  execution?: string
+  tools?: unknown[]
+}
+
 export type CodexResponseItemPayload =
   | CodexMessagePayload
   | CodexFunctionCallPayload
@@ -225,6 +241,8 @@ export type CodexResponseItemPayload =
   | CodexReasoningPayload
   | CodexLocalShellCallPayload
   | CodexWebSearchCallPayload
+  | CodexToolSearchCallPayload
+  | CodexToolSearchOutputPayload
   | { type: string; [k: string]: unknown } // forward-compat
 
 export type CodexEventMsgPayload =

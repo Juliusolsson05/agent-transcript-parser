@@ -710,6 +710,93 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 }
 
 {
+  const toolSearchCall = {
+    timestamp: '2026-04-13T12:21:00.000Z',
+    type: 'response_item' as const,
+    payload: {
+      type: 'tool_search_call' as const,
+      call_id: 'search-1',
+      execution: 'client',
+      arguments: {
+        query: 'calendar create',
+        limit: 1,
+      },
+    },
+  }
+
+  const toolSearchOutput = {
+    timestamp: '2026-04-13T12:22:00.000Z',
+    type: 'response_item' as const,
+    payload: {
+      type: 'tool_search_output' as const,
+      call_id: 'search-1',
+      status: 'completed',
+      execution: 'client',
+      tools: [
+        {
+          type: 'function',
+          name: 'mcp__codex_apps__calendar_create_event',
+          description: 'Create a calendar event.',
+        },
+      ],
+    },
+  }
+
+  const claude = toClaude([
+    {
+      timestamp: '2026-04-13T12:20:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'tool-search-session',
+        timestamp: '2026-04-13T12:20:00.000Z',
+        cwd: process.cwd(),
+        originator: 'codex',
+      },
+    },
+    toolSearchCall,
+    toolSearchOutput,
+  ])
+
+  check(
+    'tool_search_call emits Claude assistant summary',
+    claude.some(
+      entry =>
+        entry.type === 'assistant' &&
+        Array.isArray(entry.message?.content) &&
+        entry.message.content.some(
+          block =>
+            block.type === 'text' &&
+            typeof block.text === 'string' &&
+            block.text.includes('Searched available tools.'),
+        ),
+    ),
+  )
+  check(
+    'tool_search_output emits Claude structured_output attachment',
+    claude.some(
+      entry =>
+        entry.type === 'attachment' &&
+        entry.attachment?.type === 'structured_output' &&
+        Array.isArray(entry.attachment.data),
+    ),
+  )
+  check(
+    'tool_search_output emits Claude user summary',
+    claude.some(
+      entry =>
+        entry.type === 'user' &&
+        Array.isArray(entry.message?.content) &&
+        entry.message.content.some(
+          block =>
+            block.type === 'text' &&
+            typeof block.text === 'string' &&
+            block.text.includes('Tool search returned 1 result.'),
+        ),
+    ),
+  )
+}
+
+{
   const todoReminder: ClaudeEntry = {
     type: 'attachment',
     uuid: 'att-15',

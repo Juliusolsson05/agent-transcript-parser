@@ -629,6 +629,43 @@ Known gaps:
 - likely no real Claude-native tool renderer for this name
 - may need summary fallback or attachment strategy instead
 
+### `response_item:tool_search_call`
+
+Current mapping:
+
+- translated to Claude assistant text summary
+
+Status:
+
+- `summary fallback`
+
+Why this is the current shape:
+
+- Codex persists tool discovery as first-class response items because later
+  turns can rely on those discovered tools
+- Claude has no first-class transcript item for "tool inventory search"
+- a visible summary is safer than silently dropping the search in lossy mode
+
+### `response_item:tool_search_output`
+
+Current mapping:
+
+- translated to a Claude `structured_output` attachment carrying the raw tool list
+- plus a Claude user text summary of the search results
+
+Status:
+
+- `summary fallback`
+- plus `native attachment synthesis`
+
+Why this is worth doing:
+
+- Codex search results are persisted context, not just transient UI
+- Claude already persists `structured_output` attachments for machine-readable
+  payloads even when they are null-rendering in the UI
+- this keeps the discovered tool inventory available to a resumed Claude
+  session without dumping every tool schema inline into visible chat text
+
 ## Claude -> Codex
 
 ## Top-level Claude entry types

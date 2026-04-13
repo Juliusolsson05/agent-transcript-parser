@@ -72,6 +72,7 @@ writeFileSync(
 - Synthetic round-trip fixtures pass (30/30 in `testing/verify.ts`).
 - Real translator coverage now includes native/intentional mappings for:
   - Codex shell calls <-> Claude `Bash`
+  - Codex `tool_search_*` items -> Claude summaries plus `structured_output`
   - Claude `queued_command` -> native Codex user turns
   - several Claude attachment families -> Codex assistant commentary fallbacks, including diagnostics, mode/context reminders, plan-file references, invoked skills, and reminder/instruction attachments
   - Codex structured tool outputs -> Claude rich `tool_result.content`
