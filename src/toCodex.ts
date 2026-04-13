@@ -451,6 +451,14 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (attachment.type === 'task_status') {
     return mapTaskStatusAttachment(entry, attachment)
   }
+  if (
+    attachment.type === 'hook_blocking_error' ||
+    attachment.type === 'hook_success' ||
+    attachment.type === 'hook_additional_context' ||
+    attachment.type === 'hook_stopped_continuation'
+  ) {
+    return mapHookAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -678,6 +686,21 @@ function mapTaskStatusAttachment(
     entry.timestamp,
     summarizeTaskStatusAttachment(attachment),
   )
+}
+
+function mapHookAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const text = summarizeHookAttachment(attachment)
+  if (!text) return passthroughLine(entry)
+
+  // Hook attachments are mostly hidden/system-reminder context in Claude,
+  // not visible chat. We still preserve the ones that messages.ts turns into
+  // explicit reminder text, because those carry actionable continuation
+  // constraints on resume. The other hook variants stay passthrough-only
+  // until we have a more faithful Codex target.
+  return assistantCommentaryLines(entry.timestamp, text)
 }
 
 // ---------------------------------------------------------------------------
@@ -1061,6 +1084,69 @@ function summarizeTaskStatusAttachment(
     parts.push(`Read the output file to retrieve the result: ${outputFile}`)
   }
   return parts.join(' ')
+}
+
+function summarizeHookAttachment(
+  attachment: Record<string, unknown>,
+): string | null {
+  switch (attachment.type) {
+    case 'hook_blocking_error': {
+      const hookName =
+        typeof attachment.hookName === 'string' ? attachment.hookName : 'Hook'
+      const blockingError =
+        typeof attachment.blockingError === 'object' && attachment.blockingError !== null
+          ? (attachment.blockingError as Record<string, unknown>)
+          : {}
+      const command =
+        typeof blockingError.command === 'string' ? blockingError.command : 'unknown command'
+      const error =
+        typeof blockingError.blockingError === 'string'
+          ? blockingError.blockingError
+          : 'blocking error'
+      return `${hookName} hook blocking error from command: "${command}": ${error}`
+    }
+    case 'hook_success': {
+      // Claude only surfaces hook_success for SessionStart and
+      // UserPromptSubmit. Other success attachments are intentionally
+      // null-rendering, so we mirror that policy instead of suddenly
+      // making every successful hook visible after translation.
+      if (
+        attachment.hookEvent !== 'SessionStart' &&
+        attachment.hookEvent !== 'UserPromptSubmit'
+      ) {
+        return null
+      }
+      if (typeof attachment.content !== 'string' || attachment.content.length === 0) {
+        return null
+      }
+      const hookName =
+        typeof attachment.hookName === 'string' ? attachment.hookName : 'Hook'
+      return `${hookName} hook success: ${attachment.content}`
+    }
+    case 'hook_additional_context': {
+      if (!Array.isArray(attachment.content) || attachment.content.length === 0) {
+        return null
+      }
+      const hookName =
+        typeof attachment.hookName === 'string' ? attachment.hookName : 'Hook'
+      const parts = attachment.content.filter(
+        (part): part is string => typeof part === 'string' && part.length > 0,
+      )
+      if (parts.length === 0) return null
+      return `${hookName} hook additional context: ${parts.join('\n')}`
+    }
+    case 'hook_stopped_continuation': {
+      const hookName =
+        typeof attachment.hookName === 'string' ? attachment.hookName : 'Hook'
+      const message =
+        typeof attachment.message === 'string' && attachment.message.length > 0
+          ? attachment.message
+          : 'continuation stopped'
+      return `${hookName} hook stopped continuation: ${message}`
+    }
+    default:
+      return null
+  }
 }
 
 // ---------------------------------------------------------------------------

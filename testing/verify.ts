@@ -512,6 +512,35 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const hookAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-10',
+    parentUuid: null,
+    sessionId: 'sess-12',
+    timestamp: '2026-04-13T12:11:00.000Z',
+    attachment: {
+      type: 'hook_stopped_continuation',
+      hookName: 'Stop',
+      hookEvent: 'Stop',
+      toolUseID: 'tool-1',
+      message: 'Stop hook prevented continuation',
+    },
+  }
+
+  const hookCodex = toCodex([hookAttachment], { lossy: true })
+  check(
+    'hook_stopped_continuation attachment emits assistant commentary',
+    hookCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message ===
+          'Stop hook stopped continuation: Stop hook prevented continuation',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
