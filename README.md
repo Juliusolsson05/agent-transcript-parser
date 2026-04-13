@@ -38,6 +38,15 @@ detectFormat(input)                // 'claude' | 'codex' | 'unknown'
 type ConvertOptions = { lossy?: boolean }
 ```
 
+Current shared options:
+
+```ts
+type ConvertOptions = {
+  lossy?: boolean
+  targetSessionId?: string // used by toCodex when synthesizing session_meta
+}
+```
+
 Plus typed exports for every Claude / Codex shape variant and the sidecar utilities (`ATP_KEY`, `attachSidecar`, `readSidecar`, `stripSidecar`).
 
 ## Quick example
@@ -61,6 +70,11 @@ writeFileSync(
 
 - Library API is complete and stable.
 - Synthetic round-trip fixtures pass (30/30 in `testing/verify.ts`).
+- Real translator coverage now includes native/intentional mappings for:
+  - Codex shell calls <-> Claude `Bash`
+  - Claude `queued_command` -> native Codex user turns
+  - several Claude attachment families -> Codex assistant commentary fallbacks
+  - Codex structured tool outputs -> Claude rich `tool_result.content`
 - Real-transcript testing started; not yet fully green — see `docs/implementation-plan.md` for known gaps.
 - Not yet consumed by a downstream tool — package is built and tested in isolation.
 

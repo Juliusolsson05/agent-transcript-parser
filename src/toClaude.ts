@@ -788,6 +788,25 @@ function mapEventMsg(
   line: CodexRolloutLine,
   payload: CodexEventMsgPayload,
 ): ClaudeEntry[] {
+  if (payload.type === 'thread_name_updated') {
+    const title =
+      typeof payload.thread_name === 'string' ? payload.thread_name.trim() : ''
+    if (title.length > 0) {
+      // Codex persists thread renames as a dedicated event, and Claude
+      // persists the equivalent concept as a `custom-title` metadata
+      // entry. Translating directly into Claude's metadata form is
+      // better than a system sentinel because Claude's resume/tail
+      // readers already know how to surface custom-title entries.
+      return [
+        stamp(ctx, {
+          uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'thread_name_updated']),
+          timestamp: line.timestamp,
+          type: 'custom-title',
+          customTitle: title,
+        }),
+      ]
+    }
+  }
   if (payload.type === 'exec_approval_request') {
     const p = payload as {
       type: 'exec_approval_request'

@@ -541,6 +541,38 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const codexRename: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-13T12:12:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-rename',
+        timestamp: '2026-04-13T12:12:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:12:01.000Z',
+      type: 'event_msg',
+      payload: {
+        type: 'thread_name_updated',
+        thread_name: 'translated thread name',
+      },
+    },
+  ]
+
+  const renamed = toClaude(codexRename, { lossy: true })
+  check(
+    'thread_name_updated event emits Claude custom-title metadata',
+    renamed.some(
+      entry =>
+        entry.type === 'custom-title' &&
+        entry.customTitle === 'translated thread name',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

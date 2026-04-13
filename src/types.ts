@@ -92,6 +92,7 @@ export type ClaudeEntry = WithAtp<{
     | 'system'
     | 'attachment'
     | 'file-history-snapshot'
+    | 'custom-title'
     | string
   uuid: string
   parentUuid: string | null
@@ -123,6 +124,8 @@ export type ClaudeEntry = WithAtp<{
   messageId?: string
   snapshot?: Record<string, unknown>
   isSnapshotUpdate?: boolean
+  // Session metadata entry fields
+  customTitle?: string
 }>
 
 // ---------------------------------------------------------------------------
@@ -245,6 +248,7 @@ export type CodexEventMsgPayload =
       turn_id?: string
       [k: string]: unknown
     }
+  | { type: 'thread_name_updated'; thread_name?: string | null; [k: string]: unknown }
   | { type: 'user_message'; message?: string; [k: string]: unknown }
   | { type: 'agent_message'; message?: string; phase?: string }
   | { type: 'agent_message_delta'; delta?: string }
