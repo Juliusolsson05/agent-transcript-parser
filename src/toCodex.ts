@@ -460,6 +460,12 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   ) {
     return mapHookAttachment(entry, attachment)
   }
+  if (
+    attachment.type === 'agent_listing_delta' ||
+    attachment.type === 'mcp_instructions_delta'
+  ) {
+    return mapCapabilityDeltaAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -722,6 +728,21 @@ function mapHookAttachment(
   // explicit reminder text, because those carry actionable continuation
   // constraints on resume. The other hook variants stay passthrough-only
   // until we have a more faithful Codex target.
+  return assistantCommentaryLines(entry.timestamp, text)
+}
+
+function mapCapabilityDeltaAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const text = summarizeCapabilityDeltaAttachment(attachment)
+  if (!text) return passthroughLine(entry)
+
+  // These attachment families are capability/instruction deltas that
+  // Claude injects as hidden reminder text. They are not user prompts,
+  // but dropping them in lossy mode would erase the fact that the model
+  // saw a capability change mid-session. Assistant commentary is the
+  // least misleading persisted Codex fallback.
   return assistantCommentaryLines(entry.timestamp, text)
 }
 
@@ -1165,6 +1186,56 @@ function summarizeHookAttachment(
           ? attachment.message
           : 'continuation stopped'
       return `${hookName} hook stopped continuation: ${message}`
+    }
+    default:
+      return null
+  }
+}
+
+function summarizeCapabilityDeltaAttachment(
+  attachment: Record<string, unknown>,
+): string | null {
+  switch (attachment.type) {
+    case 'agent_listing_delta': {
+      const parts: string[] = []
+      const addedLines = Array.isArray(attachment.addedLines)
+        ? attachment.addedLines.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : []
+      const removedTypes = Array.isArray(attachment.removedTypes)
+        ? attachment.removedTypes.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : []
+      if (addedLines.length > 0) {
+        const header = attachment.isInitial
+          ? 'Available agent types:'
+          : 'New agent types are now available:'
+        parts.push(`${header}\n${addedLines.join('\n')}`)
+      }
+      if (removedTypes.length > 0) {
+        parts.push(
+          `The following agent types are no longer available:\n${removedTypes.map(t => `- ${t}`).join('\n')}`,
+        )
+      }
+      return parts.length > 0 ? parts.join('\n\n') : null
+    }
+    case 'mcp_instructions_delta': {
+      const parts: string[] = []
+      const addedBlocks = Array.isArray(attachment.addedBlocks)
+        ? attachment.addedBlocks.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : []
+      const removedNames = Array.isArray(attachment.removedNames)
+        ? attachment.removedNames.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : []
+      if (addedBlocks.length > 0) {
+        parts.push(
+          `MCP server instructions changed:\n\n${addedBlocks.join('\n\n')}`,
+        )
+      }
+      if (removedNames.length > 0) {
+        parts.push(
+          `The following MCP servers disconnected:\n${removedNames.join('\n')}`,
+        )
+      }
+      return parts.length > 0 ? parts.join('\n\n') : null
     }
     default:
       return null

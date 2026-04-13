@@ -596,6 +596,62 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const agentDeltaAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-11',
+    parentUuid: null,
+    sessionId: 'sess-13',
+    timestamp: '2026-04-13T12:14:00.000Z',
+    attachment: {
+      type: 'agent_listing_delta',
+      addedLines: ['- explorer: specific codebase questions'],
+      removedTypes: ['legacy-agent'],
+      addedTypes: ['explorer'],
+      isInitial: false,
+      showConcurrencyNote: false,
+    },
+  }
+
+  const mcpDeltaAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-12',
+    parentUuid: null,
+    sessionId: 'sess-14',
+    timestamp: '2026-04-13T12:15:00.000Z',
+    attachment: {
+      type: 'mcp_instructions_delta',
+      addedNames: ['filesystem'],
+      addedBlocks: ['Use the filesystem server for local project resources.'],
+      removedNames: ['old-server'],
+    },
+  }
+
+  const agentCodex = toCodex([agentDeltaAttachment], { lossy: true })
+  const mcpCodex = toCodex([mcpDeltaAttachment], { lossy: true })
+
+  check(
+    'agent_listing_delta attachment emits assistant commentary',
+    agentCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('New agent types are now available:'),
+    ),
+  )
+  check(
+    'mcp_instructions_delta attachment emits assistant commentary',
+    mcpCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('MCP server instructions changed:'),
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
