@@ -737,8 +737,6 @@ Biggest gap:
 
 Important attachment types still unmapped:
 
-- `queued_command`
-- `edited_text_file`
 - `hook_error_during_execution`
 - `command_permissions`
 - `structured_output`
@@ -767,6 +765,8 @@ Recently mapped intentionally as Codex assistant commentary:
 - `hook_success` for surfaced Claude events
 - `hook_additional_context`
 - `hook_stopped_continuation`
+- `plan_file_reference`
+- `invoked_skills`
 
 Recently mapped as native Codex user state:
 

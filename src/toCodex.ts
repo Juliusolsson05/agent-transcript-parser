@@ -466,6 +466,12 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   ) {
     return mapCapabilityDeltaAttachment(entry, attachment)
   }
+  if (
+    attachment.type === 'plan_file_reference' ||
+    attachment.type === 'invoked_skills'
+  ) {
+    return mapContextReferenceAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -743,6 +749,21 @@ function mapCapabilityDeltaAttachment(
   // but dropping them in lossy mode would erase the fact that the model
   // saw a capability change mid-session. Assistant commentary is the
   // least misleading persisted Codex fallback.
+  return assistantCommentaryLines(entry.timestamp, text)
+}
+
+function mapContextReferenceAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const text = summarizeContextReferenceAttachment(attachment)
+  if (!text) return passthroughLine(entry)
+
+  // These attachments carry durable context Claude injected back into the
+  // model (existing plan contents, invoked skill guidance). They are not
+  // direct user turns, but they materially affect how the resumed agent
+  // should behave, so keeping them as Codex assistant commentary is a
+  // better lossy fallback than dropping them outright.
   return assistantCommentaryLines(entry.timestamp, text)
 }
 
@@ -1236,6 +1257,43 @@ function summarizeCapabilityDeltaAttachment(
         )
       }
       return parts.length > 0 ? parts.join('\n\n') : null
+    }
+    default:
+      return null
+  }
+}
+
+function summarizeContextReferenceAttachment(
+  attachment: Record<string, unknown>,
+): string | null {
+  switch (attachment.type) {
+    case 'plan_file_reference': {
+      const path =
+        typeof attachment.planFilePath === 'string' ? attachment.planFilePath : 'plan file'
+      const content =
+        typeof attachment.planContent === 'string' ? attachment.planContent.trim() : ''
+      if (!content) return `Plan file exists at ${path}.`
+      return `Plan file reference: ${path}\n\n${content}`
+    }
+    case 'invoked_skills': {
+      if (!Array.isArray(attachment.skills) || attachment.skills.length === 0) {
+        return null
+      }
+      const rendered = attachment.skills
+        .filter(
+          (skill): skill is { name?: unknown; path?: unknown; content?: unknown } =>
+            typeof skill === 'object' && skill !== null,
+        )
+        .map(skill => {
+          const name = typeof skill.name === 'string' ? skill.name : 'skill'
+          const path = typeof skill.path === 'string' ? skill.path : 'unknown path'
+          const content = typeof skill.content === 'string' ? skill.content : ''
+          return `Skill: ${name}\nPath: ${path}${content ? `\n\n${content}` : ''}`
+        })
+        .filter(Boolean)
+      return rendered.length > 0
+        ? `Invoked skills in this session:\n\n${rendered.join('\n\n---\n\n')}`
+        : null
     }
     default:
       return null

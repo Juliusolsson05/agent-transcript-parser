@@ -652,6 +652,63 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const planRefAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-13',
+    parentUuid: null,
+    sessionId: 'sess-15',
+    timestamp: '2026-04-13T12:16:00.000Z',
+    attachment: {
+      type: 'plan_file_reference',
+      planFilePath: '/tmp/project/plan.md',
+      planContent: '- Step 1\n- Step 2',
+    },
+  }
+
+  const skillsAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-14',
+    parentUuid: null,
+    sessionId: 'sess-16',
+    timestamp: '2026-04-13T12:17:00.000Z',
+    attachment: {
+      type: 'invoked_skills',
+      skills: [
+        {
+          name: 'gmail',
+          path: '/skills/gmail/SKILL.md',
+          content: 'Use Gmail query syntax.',
+        },
+      ],
+    },
+  }
+
+  const planRefCodex = toCodex([planRefAttachment], { lossy: true })
+  const skillsCodex = toCodex([skillsAttachment], { lossy: true })
+
+  check(
+    'plan_file_reference attachment emits assistant commentary',
+    planRefCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('Plan file reference: /tmp/project/plan.md'),
+    ),
+  )
+  check(
+    'invoked_skills attachment emits assistant commentary',
+    skillsCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('Invoked skills in this session:'),
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
