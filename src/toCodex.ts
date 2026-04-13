@@ -418,6 +418,9 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (attachment.type === 'edited_text_file') {
     return mapEditedTextFileAttachment(entry, attachment)
   }
+  if (attachment.type === 'diagnostics') {
+    return mapDiagnosticsAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -484,6 +487,45 @@ function mapEditedTextFileAttachment(
   //   heuristics, which key off early user_message items
   // - an assistant-side status line keeps the edit visible in lossy
   //   mode without lying about who originated it
+  return [
+    {
+      timestamp: entry.timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'agent_message',
+        message: text,
+        phase: 'commentary',
+      },
+    },
+    {
+      timestamp: entry.timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text }],
+      },
+    },
+  ]
+}
+
+function mapDiagnosticsAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const text = summarizeDiagnosticsAttachment(attachment)
+
+  // Claude diagnostics attachments are genuine transcript state: they
+  // carry IDE/LSP feedback the model saw mid-session. Codex has no
+  // dedicated rollout item for "diagnostics attachment arrived", so we
+  // preserve the information as assistant commentary rather than
+  // silently discarding it in lossy mode.
+  //
+  // This intentionally stays assistant-side for the same reason as the
+  // edited-file mapping above: diagnostics are environmental feedback to
+  // the agent, not a new user prompt and not something that should
+  // influence Codex title/listing heuristics.
   return [
     {
       timestamp: entry.timestamp,
@@ -731,6 +773,30 @@ function passthroughLine(entry: ClaudeEntry): CodexRolloutLine[] {
       payload: { source_type: entry.type },
     },
   ]
+}
+
+function summarizeDiagnosticsAttachment(
+  attachment: Record<string, unknown>,
+): string {
+  const files = Array.isArray(attachment.files) ? attachment.files : []
+  const fileCount = files.length
+  const diagnosticCount = files.reduce((count, file) => {
+    if (typeof file !== 'object' || file === null) return count
+    const diagnostics = (file as { diagnostics?: unknown }).diagnostics
+    return count + (Array.isArray(diagnostics) ? diagnostics.length : 0)
+  }, 0)
+  const firstUri = files.find(
+    (file): file is { uri: string } =>
+      typeof file === 'object' &&
+      file !== null &&
+      typeof (file as { uri?: unknown }).uri === 'string',
+  )?.uri
+
+  if (fileCount === 0) return 'Received diagnostics.'
+  if (firstUri && fileCount === 1) {
+    return `Received ${diagnosticCount} diagnostic${diagnosticCount === 1 ? '' : 's'} for ${firstUri}.`
+  }
+  return `Received ${diagnosticCount} diagnostics across ${fileCount} files.`
 }
 
 // ---------------------------------------------------------------------------

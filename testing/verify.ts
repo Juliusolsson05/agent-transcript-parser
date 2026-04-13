@@ -251,6 +251,57 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const diagnosticsAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-3',
+    parentUuid: null,
+    sessionId: 'sess-4',
+    timestamp: '2026-04-13T12:03:00.000Z',
+    attachment: {
+      type: 'diagnostics',
+      isNew: true,
+      files: [
+        {
+          uri: 'file:///tmp/project/src/index.ts',
+          diagnostics: [
+            {
+              message: 'Unused variable',
+              severity: 'Warning',
+            },
+            {
+              message: 'Type mismatch',
+              severity: 'Error',
+            },
+          ],
+        },
+      ],
+    },
+  }
+
+  const codex = toCodex([diagnosticsAttachment], { lossy: true })
+  check(
+    'diagnostics attachment emits visible Codex assistant commentary',
+    codex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('Received 2 diagnostics'),
+    ),
+  )
+  check(
+    'diagnostics attachment emits paired assistant response_item',
+    codex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string; role?: string; phase?: string }).type === 'message' &&
+        (line.payload as { role?: string }).role === 'assistant' &&
+        (line.payload as { phase?: string }).phase === 'commentary',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
