@@ -421,6 +421,15 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (attachment.type === 'diagnostics') {
     return mapDiagnosticsAttachment(entry, attachment)
   }
+  if (
+    attachment.type === 'plan_mode' ||
+    attachment.type === 'plan_mode_reentry' ||
+    attachment.type === 'plan_mode_exit' ||
+    attachment.type === 'auto_mode' ||
+    attachment.type === 'auto_mode_exit'
+  ) {
+    return mapModeAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -526,6 +535,41 @@ function mapDiagnosticsAttachment(
   // edited-file mapping above: diagnostics are environmental feedback to
   // the agent, not a new user prompt and not something that should
   // influence Codex title/listing heuristics.
+  return [
+    {
+      timestamp: entry.timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'agent_message',
+        message: text,
+        phase: 'commentary',
+      },
+    },
+    {
+      timestamp: entry.timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text }],
+      },
+    },
+  ]
+}
+
+function mapModeAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const text = summarizeModeAttachment(attachment)
+
+  // Claude uses attachments for mode reminders/exits because these are
+  // side-channel constraints fed back into the model mid-session.
+  // Codex has no equivalent inline constraint-attachment primitive, so
+  // the best native fallback is explicit assistant commentary. That
+  // keeps the mode transition visible without pretending it was a user
+  // request or a tool execution.
   return [
     {
       timestamp: entry.timestamp,
@@ -797,6 +841,29 @@ function summarizeDiagnosticsAttachment(
     return `Received ${diagnosticCount} diagnostic${diagnosticCount === 1 ? '' : 's'} for ${firstUri}.`
   }
   return `Received ${diagnosticCount} diagnostics across ${fileCount} files.`
+}
+
+function summarizeModeAttachment(attachment: Record<string, unknown>): string {
+  switch (attachment.type) {
+    case 'plan_mode': {
+      const reminderType =
+        attachment.reminderType === 'sparse' ? 'sparse' : 'full'
+      return `Plan mode reminder (${reminderType}).`
+    }
+    case 'plan_mode_reentry':
+      return 'Re-entered plan mode.'
+    case 'plan_mode_exit':
+      return 'Exited plan mode.'
+    case 'auto_mode': {
+      const reminderType =
+        attachment.reminderType === 'sparse' ? 'sparse' : 'full'
+      return `Auto mode reminder (${reminderType}).`
+    }
+    case 'auto_mode_exit':
+      return 'Exited auto mode.'
+    default:
+      return 'Mode update.'
+  }
 }
 
 // ---------------------------------------------------------------------------

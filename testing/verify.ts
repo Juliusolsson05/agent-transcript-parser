@@ -302,6 +302,55 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const planAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-4',
+    parentUuid: null,
+    sessionId: 'sess-5',
+    timestamp: '2026-04-13T12:04:00.000Z',
+    attachment: {
+      type: 'plan_mode',
+      reminderType: 'full',
+      planFilePath: '/tmp/project/plan.md',
+      planExists: true,
+    },
+  }
+
+  const autoExitAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-5',
+    parentUuid: null,
+    sessionId: 'sess-6',
+    timestamp: '2026-04-13T12:05:00.000Z',
+    attachment: {
+      type: 'auto_mode_exit',
+    },
+  }
+
+  const planCodex = toCodex([planAttachment], { lossy: true })
+  const autoCodex = toCodex([autoExitAttachment], { lossy: true })
+
+  check(
+    'plan_mode attachment emits assistant commentary',
+    planCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message === 'Plan mode reminder (full).',
+    ),
+  )
+  check(
+    'auto_mode_exit attachment emits assistant commentary',
+    autoCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message === 'Exited auto mode.',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
