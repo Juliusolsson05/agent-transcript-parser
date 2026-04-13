@@ -1,0 +1,21 @@
+{
+  "name": "agent-transcript-parser",
+  "version": "0.1.0",
+  "description": "Translate agent transcripts between formats (Codex ↔ Claude) with round-trip fidelity.",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "verify": "tsx testing/verify.ts"
+  },
+  "devDependencies": {
+    "node-pty": "^1.1.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  },
+  "license": "MIT"
+}
