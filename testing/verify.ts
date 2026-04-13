@@ -351,6 +351,57 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const dateAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-6',
+    parentUuid: null,
+    sessionId: 'sess-7',
+    timestamp: '2026-04-13T12:06:00.000Z',
+    attachment: {
+      type: 'date_change',
+      newDate: '2026-04-14',
+    },
+  }
+
+  const resourceAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-7',
+    parentUuid: null,
+    sessionId: 'sess-8',
+    timestamp: '2026-04-13T12:07:00.000Z',
+    attachment: {
+      type: 'mcp_resource',
+      server: 'filesystem',
+      uri: 'file:///tmp/project/README.md',
+      name: 'README.md',
+      content: {},
+    },
+  }
+
+  const dateCodex = toCodex([dateAttachment], { lossy: true })
+  const resourceCodex = toCodex([resourceAttachment], { lossy: true })
+
+  check(
+    'date_change attachment emits assistant commentary',
+    dateCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message === 'Current date changed to 2026-04-14.',
+    ),
+  )
+  check(
+    'mcp_resource attachment emits assistant commentary',
+    resourceCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message === 'Loaded MCP resource from filesystem: README.md.',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

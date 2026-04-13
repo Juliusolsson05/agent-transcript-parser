@@ -430,6 +430,12 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   ) {
     return mapModeAttachment(entry, attachment)
   }
+  if (attachment.type === 'date_change') {
+    return mapDateChangeAttachment(entry, attachment)
+  }
+  if (attachment.type === 'mcp_resource') {
+    return mapMcpResourceAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -591,6 +597,42 @@ function mapModeAttachment(
       },
     },
   ]
+}
+
+function mapDateChangeAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const date =
+    typeof attachment.newDate === 'string' && attachment.newDate.length > 0
+      ? attachment.newDate
+      : 'a new date'
+
+  // Date-change attachments are Claude's way to tell the model that the
+  // ambient "today" context shifted mid-session. Codex has no dedicated
+  // attachment for that signal, but dropping it would make relative-time
+  // reasoning less reproducible in lossy exports.
+  return assistantCommentaryLines(entry.timestamp, `Current date changed to ${date}.`)
+}
+
+function mapMcpResourceAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const server = typeof attachment.server === 'string' ? attachment.server : 'MCP'
+  const name = typeof attachment.name === 'string' ? attachment.name : undefined
+  const uri = typeof attachment.uri === 'string' ? attachment.uri : undefined
+  const label = name ?? uri ?? 'resource'
+
+  // Claude persists MCP resources as attachments because they are
+  // context injections, not chat utterances. Codex likewise lacks a
+  // first-class "resource injected" rollout item here, so we degrade to
+  // commentary that at least preserves the fact that the resource was
+  // loaded and from where.
+  return assistantCommentaryLines(
+    entry.timestamp,
+    `Loaded MCP resource from ${server}: ${label}.`,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -815,6 +857,33 @@ function passthroughLine(entry: ClaudeEntry): CodexRolloutLine[] {
       timestamp: entry.timestamp ?? new Date().toISOString(),
       type: 'atp_passthrough',
       payload: { source_type: entry.type },
+    },
+  ]
+}
+
+function assistantCommentaryLines(
+  timestamp: string,
+  text: string,
+): CodexRolloutLine[] {
+  return [
+    {
+      timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'agent_message',
+        message: text,
+        phase: 'commentary',
+      },
+    },
+    {
+      timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text }],
+      },
     },
   ]
 }
