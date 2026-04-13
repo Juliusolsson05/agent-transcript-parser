@@ -215,6 +215,42 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const editedAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-2',
+    parentUuid: null,
+    sessionId: 'sess-3',
+    timestamp: '2026-04-13T12:02:00.000Z',
+    attachment: {
+      type: 'edited_text_file',
+      filename: 'src/toCodex.ts',
+      snippet: 'Updated mapping logic.',
+    },
+  }
+
+  const codex = toCodex([editedAttachment], { lossy: true })
+  check(
+    'edited_text_file attachment emits visible Codex assistant commentary',
+    codex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message === 'Edited file: src/toCodex.ts',
+    ),
+  )
+  check(
+    'edited_text_file attachment emits paired assistant response_item',
+    codex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string; role?: string; phase?: string }).type === 'message' &&
+        (line.payload as { role?: string }).role === 'assistant' &&
+        (line.payload as { phase?: string }).phase === 'commentary',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

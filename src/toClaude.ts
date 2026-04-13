@@ -666,6 +666,15 @@ function mapLocalShellCall(
   line: CodexRolloutLine,
   payload: CodexLocalShellCallPayload,
 ): ClaudeEntry {
+  // Codex has a first-class local_shell_call item, but Claude does not.
+  // The closest native Claude surface is a Bash tool_use block.
+  //
+  // We normalize both the modern Codex wire shape (`command`,
+  // `working_directory`) and our older fixture/debug shape (`cmd`,
+  // `workdir`) because the translator has already accumulated both in
+  // the wild. Being strict here would make the translator "correct"
+  // against current source while regressing real transcripts we already
+  // generated during investigation.
   const input =
     Array.isArray(payload.action?.command)
       ? {

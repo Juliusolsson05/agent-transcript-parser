@@ -296,6 +296,18 @@ function mapEntry(entry: ClaudeEntry): CodexRolloutLine[] {
 }
 
 function entryStartsNewTurn(entry: ClaudeEntry): boolean {
+  // Only a subset of Claude entries should open a fresh Codex turn.
+  //
+  // Why this explicit gate exists:
+  // Claude stores several non-chat things inline in the transcript
+  // chain (attachments, hidden meta notes, tool results). If we let
+  // every translated entry start a turn, Codex ends up with a long
+  // stream of fake micro-turns that never existed semantically. That
+  // hurts resume rendering and makes the session look like the user
+  // kept interrupting themselves.
+  //
+  // So we only open turns for entries that are genuinely "new user
+  // asks for work" boundaries in Codex terms.
   if (entry.type === 'user') return userEntryHasText(entry)
   if (entry.type === 'attachment') return attachmentStartsNewTurn(entry)
   return false
@@ -403,6 +415,9 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (attachment.type === 'queued_command') {
     return mapQueuedCommandAttachment(entry, attachment)
   }
+  if (attachment.type === 'edited_text_file') {
+    return mapEditedTextFileAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -414,6 +429,18 @@ function mapQueuedCommandAttachment(
   const prompt = typeof attachment.prompt === 'string' ? attachment.prompt.trim() : ''
   if (!prompt) return passthroughLine(entry)
 
+  // Claude's queued_command attachment is not just decorative metadata.
+  // On resume, Claude rehydrates it back into a real user prompt-like
+  // message with origin/isMeta context. Codex has no equivalent
+  // attachment bucket, so the least-wrong native representation is an
+  // actual user turn: event_msg:user_message plus the paired
+  // response_item message.
+  //
+  // This is intentionally stronger than passthrough because:
+  // 1. queued_command affects conversational continuity, not just UI
+  // 2. Codex listing/resume expects real user_message events
+  // 3. dropping it to a private sidecar makes lossy mode look like the
+  //    user never asked for that work
   return [
     {
       timestamp: entry.timestamp,
@@ -430,6 +457,51 @@ function mapQueuedCommandAttachment(
         type: 'message',
         role: 'user',
         content: [{ type: 'input_text', text: prompt }],
+      },
+    },
+  ]
+}
+
+function mapEditedTextFileAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const filename = typeof attachment.filename === 'string' ? attachment.filename : undefined
+  const snippet = typeof attachment.snippet === 'string' ? attachment.snippet.trim() : ''
+  const text = filename
+    ? `Edited file: ${filename}`
+    : snippet || 'Edited a file.'
+
+  // Claude models file-change evidence as attachments because the raw
+  // edit artifact carries more structure than a normal chat message.
+  // Codex does not have a parallel attachment primitive in the rollout
+  // stream, so we intentionally degrade to a visible assistant note
+  // instead of pretending this is a user turn.
+  //
+  // Why assistant commentary and not user_message:
+  // - the edit was produced by the agent/tooling, not typed by the user
+  // - turning it into a user event would pollute Codex title/listing
+  //   heuristics, which key off early user_message items
+  // - an assistant-side status line keeps the edit visible in lossy
+  //   mode without lying about who originated it
+  return [
+    {
+      timestamp: entry.timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'agent_message',
+        message: text,
+        phase: 'commentary',
+      },
+    },
+    {
+      timestamp: entry.timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        phase: 'commentary',
+        content: [{ type: 'output_text', text }],
       },
     },
   ]
@@ -560,6 +632,12 @@ function toLocalShellPayload(
   const command = extractBashCommand(block.input)
   if (!command) return null
 
+  // We only upgrade Bash -> local_shell_call when we can recover a
+  // concrete command string. Otherwise we leave the block as a generic
+  // function_call, because emitting a half-empty local_shell_call is
+  // worse than not upgrading at all: Codex normalizers assume these
+  // items are executable shell actions and may synthesize missing
+  // outputs around them.
   const input = block.input as Record<string, unknown>
   const workingDirectory =
     typeof input.workdir === 'string'
@@ -634,6 +712,9 @@ function mapSystemEntry(entry: ClaudeEntry): CodexRolloutLine[] {
 }
 
 function attachmentStartsNewTurn(entry: ClaudeEntry): boolean {
+  // queued_command is the one attachment family we currently treat as
+  // a true user-turn boundary. Other attachment types are metadata or
+  // post-tool side effects and should stay inside the surrounding turn.
   return Boolean(
     entry.attachment &&
       entry.attachment.type === 'queued_command' &&
