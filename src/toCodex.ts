@@ -448,6 +448,9 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   ) {
     return mapReminderAttachment(entry, attachment)
   }
+  if (attachment.type === 'task_status') {
+    return mapTaskStatusAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -654,6 +657,26 @@ function mapReminderAttachment(
   return assistantCommentaryLines(
     entry.timestamp,
     summarizeReminderAttachment(attachment),
+  )
+}
+
+function mapTaskStatusAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  // Claude emits task_status after compaction to preserve "there is still
+  // work happening in the background" context even when the original spawn
+  // turn has fallen out of the immediate transcript window. Codex has no
+  // first-class persisted attachment for that, so we preserve the signal as
+  // assistant commentary rather than silently dropping it in lossy mode.
+  //
+  // This must stay assistant-side:
+  // - it is not a user utterance
+  // - it should not influence Codex's first-user/title heuristics
+  // - it is advisory state for the agent about ongoing background work
+  return assistantCommentaryLines(
+    entry.timestamp,
+    summarizeTaskStatusAttachment(attachment),
   )
 }
 
@@ -984,6 +1007,60 @@ function summarizeReminderAttachment(
     default:
       return 'System reminder.'
   }
+}
+
+function summarizeTaskStatusAttachment(
+  attachment: Record<string, unknown>,
+): string {
+  const taskId =
+    typeof attachment.taskId === 'string' && attachment.taskId.length > 0
+      ? attachment.taskId
+      : 'unknown'
+  const description =
+    typeof attachment.description === 'string' && attachment.description.length > 0
+      ? attachment.description
+      : 'background task'
+  const taskType =
+    typeof attachment.taskType === 'string' && attachment.taskType.length > 0
+      ? attachment.taskType
+      : 'task'
+  const status =
+    attachment.status === 'killed'
+      ? 'stopped'
+      : typeof attachment.status === 'string'
+        ? attachment.status
+        : 'unknown'
+  const delta =
+    typeof attachment.deltaSummary === 'string' && attachment.deltaSummary.length > 0
+      ? attachment.deltaSummary
+      : undefined
+  const outputFile =
+    typeof attachment.outputFilePath === 'string' &&
+    attachment.outputFilePath.length > 0
+      ? attachment.outputFilePath
+      : undefined
+
+  if (attachment.status === 'killed') {
+    return `Task "${description}" (${taskId}) was stopped by the user.`
+  }
+
+  if (attachment.status === 'running') {
+    const parts = [`Background task "${description}" (${taskId}) is still running.`]
+    if (delta) parts.push(`Progress: ${delta}`)
+    if (outputFile) {
+      parts.push(`Partial output is available at ${outputFile}.`)
+    }
+    return parts.join(' ')
+  }
+
+  const parts = [
+    `Task ${taskId} (type: ${taskType}) (status: ${status}) (description: ${description}).`,
+  ]
+  if (delta) parts.push(`Delta: ${delta}`)
+  if (outputFile) {
+    parts.push(`Read the output file to retrieve the result: ${outputFile}`)
+  }
+  return parts.join(' ')
 }
 
 // ---------------------------------------------------------------------------

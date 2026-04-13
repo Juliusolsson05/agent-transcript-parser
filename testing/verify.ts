@@ -481,6 +481,37 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const taskStatusAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-9',
+    parentUuid: null,
+    sessionId: 'sess-11',
+    timestamp: '2026-04-13T12:10:00.000Z',
+    attachment: {
+      type: 'task_status',
+      taskId: 'task-42',
+      taskType: 'agent',
+      status: 'running',
+      description: 'Investigate rollout mismatch',
+      deltaSummary: 'Compared three translated sessions',
+      outputFilePath: '/tmp/task-42.out',
+    },
+  }
+
+  const taskCodex = toCodex([taskStatusAttachment], { lossy: true })
+  check(
+    'task_status attachment emits assistant commentary',
+    taskCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        (line.payload as { message?: string }).message ===
+          'Background task "Investigate rollout mismatch" (task-42) is still running. Progress: Compared three translated sessions Partial output is available at /tmp/task-42.out.',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
