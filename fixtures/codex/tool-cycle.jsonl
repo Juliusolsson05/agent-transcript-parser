@@ -1,0 +1,5 @@
+{"timestamp":"2026-04-13T10:00:00.000Z","type":"session_meta","payload":{"id":"019d9000-0000-7000-0000-000000000002","timestamp":"2026-04-13T10:00:00.000Z","cwd":"/tmp/test","originator":"codex_cli_rs","cli_version":"0.107.0","source":"cli","model_provider":"openai","git":{"branch":"main","dirty":false}}}
+{"timestamp":"2026-04-13T10:00:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"List files in the current directory."}]}}
+{"timestamp":"2026-04-13T10:00:02.000Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"ls -la\"}","call_id":"call_abc123"}}
+{"timestamp":"2026-04-13T10:00:02.500Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_abc123","output":"total 8\ndrwxr-xr-x  2 user  staff   64 Apr 13 10:00 .\ndrwxr-xr-x  3 user  staff   96 Apr 13 09:59 ..\n"}}
+{"timestamp":"2026-04-13T10:00:03.000Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"The directory is empty except for `.` and `..`."}],"phase":"final_answer"}}
