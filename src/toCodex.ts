@@ -500,6 +500,15 @@ function emitToolUse(
   entry: ClaudeEntry,
   block: ClaudeToolUseBlock,
 ): CodexRolloutLine {
+  const localShell = toLocalShellPayload(block)
+  if (localShell) {
+    return {
+      timestamp: entry.timestamp,
+      type: 'response_item',
+      payload: localShell,
+    }
+  }
+
   const kind = (block.codex?.kind as string | undefined) ?? 'function_call'
   const argsJson = JSON.stringify(block.input)
 
@@ -530,6 +539,57 @@ function emitToolUse(
       call_id: block.id,
     },
   }
+}
+
+function toLocalShellPayload(
+  block: ClaudeToolUseBlock,
+): {
+  type: 'local_shell_call'
+  call_id: string
+  status: string
+  action: {
+    type: 'exec'
+    command: string[]
+    working_directory?: string
+  }
+} | null {
+  const kind = block.codex?.kind as string | undefined
+  if (kind !== 'local_shell_call' && block.name !== 'Bash') return null
+  if (typeof block.input !== 'object' || block.input === null) return null
+
+  const command = extractBashCommand(block.input)
+  if (!command) return null
+
+  const input = block.input as Record<string, unknown>
+  const workingDirectory =
+    typeof input.workdir === 'string'
+      ? input.workdir
+      : typeof input.working_directory === 'string'
+        ? input.working_directory
+        : undefined
+
+  return {
+    type: 'local_shell_call',
+    call_id: block.id,
+    status: typeof block.codex?.status === 'string' ? block.codex.status : 'completed',
+    action: {
+      type: 'exec',
+      command: [command],
+      ...(workingDirectory ? { working_directory: workingDirectory } : {}),
+    },
+  }
+}
+
+function extractBashCommand(input: unknown): string | null {
+  if (typeof input !== 'object' || input === null) return null
+  const record = input as Record<string, unknown>
+  if (typeof record.command === 'string' && record.command.trim().length > 0) {
+    return record.command
+  }
+  if (typeof record.cmd === 'string' && record.cmd.trim().length > 0) {
+    return record.cmd
+  }
+  return null
 }
 
 function emitReasoning(

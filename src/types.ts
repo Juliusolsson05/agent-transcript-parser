@@ -86,12 +86,19 @@ export type ClaudeMessage = {
 }
 
 export type ClaudeEntry = WithAtp<{
-  type: 'user' | 'assistant' | 'system' | 'file-history-snapshot' | string
+  type:
+    | 'user'
+    | 'assistant'
+    | 'system'
+    | 'attachment'
+    | 'file-history-snapshot'
+    | string
   uuid: string
   parentUuid: string | null
   sessionId: string
   timestamp: string // ISO-8601
   message?: ClaudeMessage
+  attachment?: Record<string, unknown>
   cwd?: string
   gitBranch?: string
   requestId?: string
@@ -190,8 +197,11 @@ export type CodexLocalShellCallPayload = {
   status?: string
   action: {
     type: string
+    command?: string[]
     cmd?: string[]
+    working_directory?: string
     workdir?: string
+    timeout_ms?: number
     timeout_seconds?: number
     [k: string]: unknown
   }

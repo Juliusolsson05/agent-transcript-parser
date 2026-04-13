@@ -166,6 +166,55 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const bashAssistant: ClaudeEntry = {
+    type: 'assistant',
+    uuid: 'asst-1',
+    parentUuid: null,
+    sessionId: 'sess-2',
+    timestamp: '2026-04-13T12:01:00.000Z',
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'shell-1',
+          name: 'Bash',
+          input: {
+            command: 'rg "toolUseResult" src',
+            workdir: '/tmp/project',
+          },
+        },
+      ],
+    },
+  }
+
+  const codex = toCodex([bashAssistant], { lossy: true })
+  check(
+    'Bash tool use emits local_shell_call',
+    codex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string }).type === 'local_shell_call',
+    ),
+  )
+
+  const back = toClaude(codex, { lossy: true })
+  const bashBack = back.find(entry => entry.type === 'assistant')
+  const bashBlock = Array.isArray(bashBack?.message?.content)
+    ? bashBack?.message?.content[0]
+    : undefined
+
+  check(
+    'local_shell_call round-trips back to Claude Bash tool use',
+    Boolean(
+      bashBlock &&
+        bashBlock.type === 'tool_use' &&
+        (bashBlock as { name?: string }).name === 'Bash',
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

@@ -48,9 +48,19 @@ type Ctx = {
   sessionId: string
   cwd: string
   gitBranch: string
+  version?: string
   parentUuid: string | null
   index: number
   lossy: boolean
+  callInfo: Map<
+    string,
+    {
+      assistantUuid: string
+      claudeToolName?: string
+      originalToolName: string
+      input: unknown
+    }
+  >
 }
 
 function newCtx(lossy: boolean): Ctx {
@@ -58,10 +68,104 @@ function newCtx(lossy: boolean): Ctx {
     sessionId: '',
     cwd: '',
     gitBranch: '',
+    version: undefined,
     parentUuid: null,
     index: 0,
     lossy,
+    callInfo: new Map(),
   }
+}
+
+function summarizeToolCall(name: string, input: unknown): string {
+  if (name === 'apply_patch') {
+    const files = extractApplyPatchFiles(input)
+    if (files.length > 0) {
+      return `Applied patch touching ${files.join(', ')}.`
+    }
+    return 'Applied patch.'
+  }
+  if (name === 'parallel') {
+    return 'Ran multiple tool calls in parallel.'
+  }
+  if (name === 'write_stdin') {
+    return 'Sent input to an interactive command.'
+  }
+  return `Ran tool \`${name}\`.`
+}
+
+function summarizeToolResult(name: string, text: string, isError: boolean): string {
+  const trimmed = text.trim()
+  if (name === 'apply_patch') {
+    return trimmed || (isError ? 'Patch application failed.' : 'Patch applied successfully.')
+  }
+  if (name === 'parallel') {
+    return trimmed || (isError ? 'Parallel tool execution failed.' : 'Parallel tool execution completed.')
+  }
+  if (name === 'write_stdin') {
+    return trimmed || (isError ? 'Interactive command input failed.' : 'Interactive command input completed.')
+  }
+  return trimmed || (isError ? `Tool \`${name}\` failed.` : `Tool \`${name}\` completed.`)
+}
+
+function mapToClaudeToolName(name: string): string | undefined {
+  if (name === 'exec_command' || name === 'write_stdin') return 'Bash'
+  return undefined
+}
+
+function toBashInput(input: unknown): Record<string, unknown> {
+  if (isRecord(input)) {
+    if (typeof input.cmd === 'string') {
+      return {
+        command: input.cmd,
+        description: input.cmd,
+      }
+    }
+    if (typeof input.chars === 'string') {
+      return {
+        command: input.chars,
+        description: 'stdin input',
+      }
+    }
+  }
+  return {
+    command: typeof input === 'string' ? input : JSON.stringify(input),
+    description: 'shell command',
+  }
+}
+
+function toBashToolUseResult(
+  raw: unknown,
+  normalizedText: string,
+): Record<string, unknown> {
+  const text = typeof raw === 'string' ? raw : normalizedText
+  const exitCodeMatch = /Process exited with code (\d+)/.exec(text)
+  const outputMatch = /\nOutput:\n([\s\S]*)$/.exec(text)
+  return {
+    stdout: outputMatch ? outputMatch[1] ?? '' : normalizedText,
+    stderr: '',
+    interrupted: false,
+    ...(exitCodeMatch ? { returnCodeInterpretation: `exit ${exitCodeMatch[1]}` } : {}),
+  }
+}
+
+function extractApplyPatchFiles(input: unknown): string[] {
+  const text =
+    typeof input === 'string'
+      ? input
+      : isRecord(input) && typeof input.arguments === 'string'
+        ? input.arguments
+        : ''
+  if (text.length === 0) return []
+  const files = new Set<string>()
+  for (const line of text.split('\n')) {
+    const m = /^\*\*\* (?:Add|Update|Delete) File: (.+)$/.exec(line.trim())
+    if (m?.[1]) files.add(m[1])
+  }
+  return [...files]
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
 }
 
 /** Attach sidecar unless ctx.lossy. Also advances ctx.parentUuid +
@@ -95,9 +199,13 @@ function stamp(
 ): ClaudeEntry {
   return {
     parentUuid: ctx.parentUuid,
+    isSidechain: false,
+    userType: 'external',
+    entrypoint: 'cli',
     sessionId: ctx.sessionId,
     cwd: ctx.cwd,
     gitBranch: ctx.gitBranch,
+    ...(ctx.version ? { version: ctx.version } : {}),
     ...partial,
   }
 }
@@ -233,6 +341,7 @@ function mapSessionMeta(ctx: Ctx, payload: CodexSessionMetaPayload): void {
   if (payload.id) ctx.sessionId = payload.id
   if (payload.cwd) ctx.cwd = payload.cwd
   if (payload.git?.branch) ctx.gitBranch = payload.git.branch
+  if (payload.cli_version) ctx.version = payload.cli_version
 }
 
 function mapTurnContext(ctx: Ctx, payload: CodexTurnContextPayload): void {
@@ -266,13 +375,11 @@ function mapResponseItem(
         mapCustomToolCall(ctx, line, payload as CodexCustomToolCallPayload),
       ]
     case 'custom_tool_call_output':
-      return [
-        mapCustomToolCallOutput(
-          ctx,
-          line,
-          payload as CodexCustomToolCallOutputPayload,
-        ),
-      ]
+      return mapCustomToolCallOutput(
+        ctx,
+        line,
+        payload as CodexCustomToolCallOutputPayload,
+      )
     case 'reasoning':
       return [mapReasoning(ctx, line, payload as CodexReasoningPayload)]
     case 'local_shell_call':
@@ -331,17 +438,50 @@ function mapFunctionCall(
   line: CodexRolloutLine,
   payload: CodexFunctionCallPayload,
 ): ClaudeEntry {
+  const originalInput = parseToolInput(payload.arguments)
+  const claudeToolName = mapToClaudeToolName(payload.name)
+  const uuid = stableUuid([
+    ctx.sessionId,
+    ctx.index,
+    line.timestamp,
+    'function_call',
+    payload.call_id,
+  ])
+  ctx.callInfo.set(payload.call_id, {
+    assistantUuid: uuid,
+    claudeToolName,
+    originalToolName: payload.name,
+    input: originalInput,
+  })
+
+  if (!claudeToolName) {
+    return stamp(ctx, {
+      uuid,
+      timestamp: line.timestamp,
+      type: 'assistant',
+      message: {
+        role: 'assistant',
+        content: [
+          {
+            type: 'text',
+            text: summarizeToolCall(payload.name, originalInput),
+          },
+        ],
+      },
+    })
+  }
+
   const block: ClaudeToolUseBlock = {
     type: 'tool_use',
     id: payload.call_id,
-    name: payload.name,
-    input: parseToolInput(payload.arguments),
+    name: claudeToolName,
+    input: claudeToolName === 'Bash' ? toBashInput(originalInput) : originalInput,
     ...(payload.namespace
       ? { codex: { namespace: payload.namespace } }
       : {}),
   }
   return stamp(ctx, {
-    uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'function_call', payload.call_id]),
+    uuid,
     timestamp: line.timestamp,
     type: 'assistant',
     message: { role: 'assistant', content: [block] },
@@ -356,6 +496,34 @@ function mapFunctionCallOutput(
   const { text, metadata } = normalizeOutput(payload.output)
   const isError =
     metadata && typeof metadata.exit_code === 'number' && metadata.exit_code !== 0
+  const callInfo = ctx.callInfo.get(payload.call_id)
+  if (!callInfo?.claudeToolName) {
+    return stamp(ctx, {
+      uuid: stableUuid([
+        ctx.sessionId,
+        ctx.index,
+        line.timestamp,
+        'function_call_output_text',
+        payload.call_id,
+      ]),
+      timestamp: line.timestamp,
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: summarizeToolResult(
+              callInfo?.originalToolName ?? 'tool',
+              text,
+              Boolean(isError),
+            ),
+          },
+        ],
+      },
+    })
+  }
+
   const block: ClaudeToolResultBlock = {
     type: 'tool_result',
     tool_use_id: payload.call_id,
@@ -368,6 +536,11 @@ function mapFunctionCallOutput(
     timestamp: line.timestamp,
     type: 'user',
     message: { role: 'user', content: [block] },
+    sourceToolAssistantUUID: callInfo.assistantUuid,
+    toolUseResult:
+      callInfo.claudeToolName === 'Bash'
+        ? toBashToolUseResult(payload.output, text)
+        : undefined,
   })
 }
 
@@ -376,21 +549,31 @@ function mapCustomToolCall(
   line: CodexRolloutLine,
   payload: CodexCustomToolCallPayload,
 ): ClaudeEntry {
-  const block: ClaudeToolUseBlock = {
-    type: 'tool_use',
-    id: payload.call_id,
-    name: payload.name,
-    input: parseToolInput(payload.input),
-    codex: {
-      kind: 'custom_tool_call',
-      ...(payload.status ? { status: payload.status } : {}),
-    },
-  }
+  const input = parseToolInput(payload.input)
+  ctx.callInfo.set(payload.call_id, {
+    assistantUuid: stableUuid([
+      ctx.sessionId,
+      ctx.index,
+      line.timestamp,
+      'custom_tool_call',
+      payload.call_id,
+    ]),
+    originalToolName: payload.name,
+    input,
+  })
   return stamp(ctx, {
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'custom_tool_call', payload.call_id]),
     timestamp: line.timestamp,
     type: 'assistant',
-    message: { role: 'assistant', content: [block] },
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'text',
+          text: summarizeToolCall(payload.name, input),
+        },
+      ],
+    },
   })
 }
 
@@ -398,27 +581,53 @@ function mapCustomToolCallOutput(
   ctx: Ctx,
   line: CodexRolloutLine,
   payload: CodexCustomToolCallOutputPayload,
-): ClaudeEntry {
+): ClaudeEntry[] {
   const { text, metadata } = normalizeOutput(payload.output)
   const isError =
     metadata && typeof metadata.exit_code === 'number' && metadata.exit_code !== 0
-  const block: ClaudeToolResultBlock = {
-    type: 'tool_result',
-    tool_use_id: payload.call_id,
-    content: text,
-    ...(isError ? { is_error: true } : {}),
-    codex: {
-      kind: 'custom_tool_call_output',
-      ...(payload.name ? { name: payload.name } : {}),
-      ...(metadata ? { metadata } : {}),
-    },
+  const name = payload.name ?? ctx.callInfo.get(payload.call_id)?.originalToolName ?? 'tool'
+  const out: ClaudeEntry[] = [
+    stamp(ctx, {
+      uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'custom_tool_call_output', payload.call_id]),
+      timestamp: line.timestamp,
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: summarizeToolResult(name, text, Boolean(isError)),
+          },
+        ],
+      },
+    }),
+  ]
+
+  if (name === 'apply_patch' && !isError) {
+    const files = extractApplyPatchFiles(ctx.callInfo.get(payload.call_id)?.input)
+    for (const file of files) {
+      out.push(
+        stamp(ctx, {
+          uuid: stableUuid([
+            ctx.sessionId,
+            ctx.index,
+            line.timestamp,
+            'apply_patch_attachment',
+            file,
+          ]),
+          timestamp: line.timestamp,
+          type: 'attachment',
+          attachment: {
+            type: 'edited_text_file',
+            filename: file,
+            snippet: 'Updated via translated Codex patch.',
+          },
+        }),
+      )
+    }
   }
-  return stamp(ctx, {
-    uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'custom_tool_call_output', payload.call_id]),
-    timestamp: line.timestamp,
-    type: 'user',
-    message: { role: 'user', content: [block] },
-  })
+
+  return out
 }
 
 function mapReasoning(
@@ -457,11 +666,37 @@ function mapLocalShellCall(
   line: CodexRolloutLine,
   payload: CodexLocalShellCallPayload,
 ): ClaudeEntry {
+  const input =
+    Array.isArray(payload.action?.command)
+      ? {
+          command: payload.action.command.join(' '),
+          description: payload.action.command.join(' '),
+          ...(typeof payload.action.working_directory === 'string'
+            ? { workdir: payload.action.working_directory }
+            : {}),
+        }
+      : payload.action?.cmd && Array.isArray(payload.action.cmd)
+        ? {
+            command: payload.action.cmd.join(' '),
+            description: payload.action.cmd.join(' '),
+            ...(typeof payload.action.workdir === 'string'
+              ? { workdir: payload.action.workdir }
+              : {}),
+          }
+        : payload.action
+  const callId =
+    payload.call_id ?? stableUuid([ctx.sessionId, ctx.index, 'local_shell_call'])
+  ctx.callInfo.set(callId, {
+    assistantUuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'local_shell_call']),
+    claudeToolName: 'Bash',
+    originalToolName: 'local_shell_call',
+    input,
+  })
   const block: ClaudeToolUseBlock = {
     type: 'tool_use',
-    id: payload.call_id ?? stableUuid([ctx.sessionId, ctx.index, 'local_shell_call']),
-    name: 'local_shell',
-    input: payload.action as unknown,
+    id: callId,
+    name: 'Bash',
+    input,
     codex: {
       kind: 'local_shell_call',
       ...(payload.status ? { status: payload.status } : {}),
