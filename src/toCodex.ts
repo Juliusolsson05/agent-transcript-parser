@@ -472,6 +472,17 @@ function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   ) {
     return mapContextReferenceAttachment(entry, attachment)
   }
+  if (
+    attachment.type === 'todo_reminder' ||
+    attachment.type === 'task_reminder' ||
+    attachment.type === 'output_style' ||
+    attachment.type === 'ultrathink_effort' ||
+    attachment.type === 'deferred_tools_delta' ||
+    attachment.type === 'skill_listing' ||
+    attachment.type === 'agent_mention'
+  ) {
+    return mapInstructionAttachment(entry, attachment)
+  }
 
   return passthroughLine(entry)
 }
@@ -764,6 +775,26 @@ function mapContextReferenceAttachment(
   // direct user turns, but they materially affect how the resumed agent
   // should behave, so keeping them as Codex assistant commentary is a
   // better lossy fallback than dropping them outright.
+  return assistantCommentaryLines(entry.timestamp, text)
+}
+
+function mapInstructionAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const text = summarizeInstructionAttachment(attachment)
+  if (!text) return passthroughLine(entry)
+
+  // Claude already rehydrates these attachments as plain system-reminder
+  // user messages rather than as tools, progress cells, or hidden binary
+  // blobs. That makes them a good fit for Codex assistant commentary:
+  // the resumed model still sees the guidance, but we avoid lying about
+  // them being real user turns, tool invocations, or capability records.
+  //
+  // We are intentionally drawing the line before large memory/file payloads
+  // here. Those attachments can explode transcript size and deserve a
+  // separate policy. This helper is only for the "Claude itself turns this
+  // into reminder text" family.
   return assistantCommentaryLines(entry.timestamp, text)
 }
 
@@ -1294,6 +1325,93 @@ function summarizeContextReferenceAttachment(
       return rendered.length > 0
         ? `Invoked skills in this session:\n\n${rendered.join('\n\n---\n\n')}`
         : null
+    }
+    default:
+      return null
+  }
+}
+
+function summarizeInstructionAttachment(
+  attachment: Record<string, unknown>,
+): string | null {
+  switch (attachment.type) {
+    case 'todo_reminder': {
+      const items = Array.isArray(attachment.content)
+        ? attachment.content
+            .filter(
+              (todo): todo is { status?: unknown; content?: unknown } =>
+                typeof todo === 'object' && todo !== null,
+            )
+            .map((todo, index) => {
+              const status = typeof todo.status === 'string' ? todo.status : 'unknown'
+              const content = typeof todo.content === 'string' ? todo.content : ''
+              return `${index + 1}. [${status}] ${content}`.trimEnd()
+            })
+            .filter(Boolean)
+        : []
+      const suffix =
+        items.length > 0 ? `\n\nExisting todo list:\n${items.join('\n')}` : ''
+      return (
+        "Todo tracking reminder: use TodoWrite when the current work would benefit from progress tracking, and clean up stale todo items when relevant." +
+        suffix
+      )
+    }
+    case 'task_reminder': {
+      const items = Array.isArray(attachment.content)
+        ? attachment.content
+            .filter(
+              (task): task is { id?: unknown; status?: unknown; subject?: unknown } =>
+                typeof task === 'object' && task !== null,
+            )
+            .map(task => {
+              const id = typeof task.id === 'number' || typeof task.id === 'string' ? task.id : '?'
+              const status = typeof task.status === 'string' ? task.status : 'unknown'
+              const subject = typeof task.subject === 'string' ? task.subject : ''
+              return `#${id}. [${status}] ${subject}`.trimEnd()
+            })
+            .filter(Boolean)
+        : []
+      const suffix = items.length > 0 ? `\n\nExisting tasks:\n${items.join('\n')}` : ''
+      return (
+        'Task-tracking reminder: use the task tools when the current work would benefit from explicit task status tracking, and clean up stale tasks when relevant.' +
+        suffix
+      )
+    }
+    case 'output_style': {
+      const style = typeof attachment.style === 'string' ? attachment.style : 'custom'
+      return `Output style reminder: the active Claude output style is "${style}".`
+    }
+    case 'ultrathink_effort': {
+      const level = typeof attachment.level === 'string' ? attachment.level : 'unknown'
+      return `Reasoning effort reminder: the requested effort level is ${level}.`
+    }
+    case 'deferred_tools_delta': {
+      const addedLines = Array.isArray(attachment.addedLines)
+        ? attachment.addedLines.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : []
+      const removedNames = Array.isArray(attachment.removedNames)
+        ? attachment.removedNames.filter((x): x is string => typeof x === 'string' && x.length > 0)
+        : []
+      const parts: string[] = []
+      if (addedLines.length > 0) {
+        parts.push(`Deferred tools now available:\n${addedLines.join('\n')}`)
+      }
+      if (removedNames.length > 0) {
+        parts.push(`Deferred tools no longer available:\n${removedNames.join('\n')}`)
+      }
+      return parts.length > 0 ? parts.join('\n\n') : null
+    }
+    case 'skill_listing': {
+      const content =
+        typeof attachment.content === 'string' ? attachment.content.trim() : ''
+      return content ? `Available skills:\n\n${content}` : null
+    }
+    case 'agent_mention': {
+      const agentType =
+        typeof attachment.agentType === 'string' && attachment.agentType.length > 0
+          ? attachment.agentType
+          : 'agent'
+      return `Agent invocation reminder: the user explicitly asked to invoke the "${agentType}" agent type.`
     }
     default:
       return null

@@ -709,6 +709,80 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   )
 }
 
+{
+  const todoReminder: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-15',
+    parentUuid: null,
+    sessionId: 'sess-17',
+    timestamp: '2026-04-13T12:18:00.000Z',
+    attachment: {
+      type: 'todo_reminder',
+      content: [{ status: 'in_progress', content: 'Audit transcript mappings' }],
+    },
+  }
+
+  const deferredTools: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-16',
+    parentUuid: null,
+    sessionId: 'sess-18',
+    timestamp: '2026-04-13T12:19:00.000Z',
+    attachment: {
+      type: 'deferred_tools_delta',
+      addedLines: ['tool_search: Search deferred tools'],
+      removedNames: ['legacy_tool'],
+    },
+  }
+
+  const agentMention: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-17',
+    parentUuid: null,
+    sessionId: 'sess-19',
+    timestamp: '2026-04-13T12:20:00.000Z',
+    attachment: {
+      type: 'agent_mention',
+      agentType: 'explorer',
+    },
+  }
+
+  const todoCodex = toCodex([todoReminder], { lossy: true })
+  const deferredCodex = toCodex([deferredTools], { lossy: true })
+  const agentMentionCodex = toCodex([agentMention], { lossy: true })
+
+  check(
+    'todo_reminder attachment emits assistant commentary',
+    todoCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('Todo tracking reminder:'),
+    ),
+  )
+  check(
+    'deferred_tools_delta attachment emits assistant commentary',
+    deferredCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('Deferred tools now available:'),
+    ),
+  )
+  check(
+    'agent_mention attachment emits assistant commentary',
+    agentMentionCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'agent_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('Agent invocation reminder:'),
+    ),
+  )
+}
+
 // ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------

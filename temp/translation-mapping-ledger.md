@@ -767,6 +767,13 @@ Recently mapped intentionally as Codex assistant commentary:
 - `hook_stopped_continuation`
 - `plan_file_reference`
 - `invoked_skills`
+- `todo_reminder`
+- `task_reminder`
+- `output_style`
+- `ultrathink_effort`
+- `deferred_tools_delta`
+- `skill_listing`
+- `agent_mention`
 
 Recently mapped as native Codex user state:
 

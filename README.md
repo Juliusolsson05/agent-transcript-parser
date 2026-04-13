@@ -73,7 +73,7 @@ writeFileSync(
 - Real translator coverage now includes native/intentional mappings for:
   - Codex shell calls <-> Claude `Bash`
   - Claude `queued_command` -> native Codex user turns
-  - several Claude attachment families -> Codex assistant commentary fallbacks, including diagnostics, mode/context reminders, plan-file references, and invoked skills
+  - several Claude attachment families -> Codex assistant commentary fallbacks, including diagnostics, mode/context reminders, plan-file references, invoked skills, and reminder/instruction attachments
   - Codex structured tool outputs -> Claude rich `tool_result.content`
 - Real-transcript testing started; not yet fully green — see `docs/implementation-plan.md` for known gaps.
 - Not yet consumed by a downstream tool — package is built and tested in isolation.
