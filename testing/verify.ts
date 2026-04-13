@@ -128,6 +128,45 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 }
 
 // ---------------------------------------------------------------------------
+// Native mapping assertions for high-value custom cases
+// ---------------------------------------------------------------------------
+
+{
+  const queuedAttachment: ClaudeEntry = {
+    type: 'attachment',
+    uuid: 'att-1',
+    parentUuid: null,
+    sessionId: 'sess-1',
+    timestamp: '2026-04-13T12:00:00.000Z',
+    attachment: {
+      type: 'queued_command',
+      prompt: 'Run the verification script',
+      isMeta: true,
+    },
+  }
+
+  const codex = toCodex([queuedAttachment], { lossy: true })
+  check(
+    'queued_command attachment emits a native Codex user_message event',
+    codex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'user_message' &&
+        (line.payload as { message?: string }).message === 'Run the verification script',
+    ),
+  )
+  check(
+    'queued_command attachment emits a native Codex user response_item',
+    codex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string; role?: string }).type === 'message' &&
+        (line.payload as { role?: string }).role === 'user',
+    ),
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Exit
 // ---------------------------------------------------------------------------
 

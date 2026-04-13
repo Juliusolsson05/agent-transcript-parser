@@ -118,7 +118,7 @@ export function toCodex(
     // Start a new turn on every user entry that carries text
     // content. Tool-result-only user entries don't qualify — they're
     // the assistant's tool-output replies, not a new user prompt.
-    const startsNewTurn = entry.type === 'user' && userEntryHasText(entry)
+    const startsNewTurn = entryStartsNewTurn(entry)
     if (startsNewTurn) {
       closeTurn(entry.timestamp)
       openTurn = {
@@ -277,6 +277,7 @@ function mapEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (entry.type === 'user') return mapUserEntry(entry)
   if (entry.type === 'assistant') return mapAssistantEntry(entry)
   if (entry.type === 'system') return mapSystemEntry(entry)
+  if (entry.type === 'attachment') return mapAttachmentEntry(entry)
   // Unknown Claude entry types (permission-mode, file-history-snapshot,
   // attachment, last-prompt, queue-operation, progress, etc.) have no
   // native Codex form. Emit a passthrough line that carries the entry
@@ -292,6 +293,12 @@ function mapEntry(entry: ClaudeEntry): CodexRolloutLine[] {
       payload: { source_type: entry.type },
     },
   ]
+}
+
+function entryStartsNewTurn(entry: ClaudeEntry): boolean {
+  if (entry.type === 'user') return userEntryHasText(entry)
+  if (entry.type === 'attachment') return attachmentStartsNewTurn(entry)
+  return false
 }
 
 // ---------------------------------------------------------------------------
@@ -383,6 +390,49 @@ function emitToolResult(
       output: content,
     },
   }
+}
+
+// ---------------------------------------------------------------------------
+// attachment entries
+// ---------------------------------------------------------------------------
+
+function mapAttachmentEntry(entry: ClaudeEntry): CodexRolloutLine[] {
+  const attachment = entry.attachment
+  if (!attachment || typeof attachment.type !== 'string') return passthroughLine(entry)
+
+  if (attachment.type === 'queued_command') {
+    return mapQueuedCommandAttachment(entry, attachment)
+  }
+
+  return passthroughLine(entry)
+}
+
+function mapQueuedCommandAttachment(
+  entry: ClaudeEntry,
+  attachment: Record<string, unknown>,
+): CodexRolloutLine[] {
+  const prompt = typeof attachment.prompt === 'string' ? attachment.prompt.trim() : ''
+  if (!prompt) return passthroughLine(entry)
+
+  return [
+    {
+      timestamp: entry.timestamp,
+      type: 'event_msg',
+      payload: {
+        type: 'user_message',
+        message: prompt,
+      },
+    },
+    {
+      timestamp: entry.timestamp,
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: prompt }],
+      },
+    },
+  ]
 }
 
 // ---------------------------------------------------------------------------
@@ -521,6 +571,25 @@ function mapSystemEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   // via the sidecar short-circuit path (which isn't hit when the
   // input entry had no _atp).
   return []
+}
+
+function attachmentStartsNewTurn(entry: ClaudeEntry): boolean {
+  return Boolean(
+    entry.attachment &&
+      entry.attachment.type === 'queued_command' &&
+      typeof entry.attachment.prompt === 'string' &&
+      entry.attachment.prompt.trim().length > 0,
+  )
+}
+
+function passthroughLine(entry: ClaudeEntry): CodexRolloutLine[] {
+  return [
+    {
+      timestamp: entry.timestamp ?? new Date().toISOString(),
+      type: 'atp_passthrough',
+      payload: { source_type: entry.type },
+    },
+  ]
 }
 
 // ---------------------------------------------------------------------------
