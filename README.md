@@ -74,6 +74,8 @@ writeFileSync(
   - Codex shell calls <-> Claude `Bash`
   - Codex `tool_search_*` items -> Claude summaries plus `structured_output`
   - Claude `queued_command` -> native Codex user turns
+  - lossy Claude `tool_result` arrays -> flattened Codex tool output text instead of silent drops
+  - lossy Claude image/document user content -> textual Codex fallback markers
   - several Claude attachment families -> Codex assistant commentary fallbacks, including diagnostics, mode/context reminders, plan-file references, invoked skills, and reminder/instruction attachments
   - Codex structured tool outputs -> Claude rich `tool_result.content`
 - Real-transcript testing started; not yet fully green — see `docs/implementation-plan.md` for known gaps.

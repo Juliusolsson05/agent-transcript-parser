@@ -32,7 +32,17 @@ function readJsonl<T>(path: string): T[] {
 }
 
 function stableStringify(value: unknown): string {
-  return JSON.stringify(value)
+  return JSON.stringify(sortJson(value))
+}
+
+function sortJson(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortJson)
+  if (!value || typeof value !== 'object') return value
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([key, inner]) => [key, sortJson(inner)]),
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -710,6 +720,63 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 }
 
 {
+  const duplicateSourceEntry: ClaudeEntry = {
+    type: 'assistant',
+    uuid: 'dup-source',
+    parentUuid: null,
+    sessionId: 'dup-session',
+    cwd: '/tmp/dup',
+    gitBranch: 'main',
+    timestamp: '2026-04-13T12:30:00.000Z',
+    message: {
+      role: 'assistant',
+      content: [{ type: 'text', text: 'shared source' }],
+    },
+  }
+
+  const duplicateSourceCodex = toCodex([
+    {
+      ...duplicateSourceEntry,
+      _atp: {
+        origin: 'codex',
+        source: {
+          timestamp: '2026-04-13T12:30:00.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'tool_a',
+            arguments: '{"a":1}',
+            call_id: 'call-a',
+          },
+        },
+      },
+    },
+    {
+      ...duplicateSourceEntry,
+      uuid: 'dup-source-2',
+      _atp: {
+        origin: 'codex',
+        source: {
+          timestamp: '2026-04-13T12:30:00.000Z',
+          type: 'response_item',
+          payload: {
+            type: 'function_call',
+            name: 'tool_b',
+            arguments: '{"b":2}',
+            call_id: 'call-b',
+          },
+        },
+      },
+    },
+  ])
+
+  check(
+    'distinct sidecar Codex sources with same timestamp and type are both preserved',
+    duplicateSourceCodex.filter(line => line.type === 'response_item').length === 2,
+  )
+}
+
+{
   const toolSearchCall = {
     timestamp: '2026-04-13T12:21:00.000Z',
     type: 'response_item' as const,
@@ -797,6 +864,69 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 }
 
 {
+  const richToolResultClaude: ClaudeEntry = {
+    type: 'user',
+    uuid: 'rich-tool-result',
+    parentUuid: null,
+    sessionId: 'sess-rich',
+    timestamp: '2026-04-13T12:23:00.000Z',
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tool-rich',
+          content: [
+            { type: 'text', text: 'tool returned text' },
+            { type: 'image' },
+            { type: 'search_result', title: 'Example result' },
+          ],
+        },
+      ],
+    },
+  }
+
+  const multimediaUserClaude: ClaudeEntry = {
+    type: 'user',
+    uuid: 'user-image',
+    parentUuid: null,
+    sessionId: 'sess-user-image',
+    timestamp: '2026-04-13T12:24:00.000Z',
+    message: {
+      role: 'user',
+      content: [
+        { type: 'image', source: { media_type: 'image/png' } },
+        { type: 'document', title: 'spec.pdf' },
+      ],
+    },
+  }
+
+  const richToolResultCodex = toCodex([richToolResultClaude], { lossy: true })
+  const multimediaUserCodex = toCodex([multimediaUserClaude], { lossy: true })
+
+  check(
+    'rich Claude tool_result content is flattened instead of dropped in lossy toCodex',
+    richToolResultCodex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string }).type === 'function_call_output' &&
+        typeof (line.payload as { output?: string }).output === 'string' &&
+        (line.payload as { output: string }).output.includes('tool returned text'),
+    ),
+  )
+  check(
+    'non-text Claude user content falls back to textual markers in lossy toCodex',
+    multimediaUserCodex.some(
+      line =>
+        line.type === 'event_msg' &&
+        (line.payload as { type?: string }).type === 'user_message' &&
+        typeof (line.payload as { message?: string }).message === 'string' &&
+        (line.payload as { message: string }).message.includes('[User attached image: image/png]'),
+    ),
+  )
+}
+
+{
   const todoReminder: ClaudeEntry = {
     type: 'attachment',
     uuid: 'att-15',
@@ -867,6 +997,63 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
         typeof (line.payload as { message?: string }).message === 'string' &&
         (line.payload as { message: string }).message.includes('Agent invocation reminder:'),
     ),
+  )
+}
+
+{
+  const mixedClaude = toClaude([
+    {
+      timestamp: '2026-04-13T12:40:00.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'native codex line after sidecar' }],
+      },
+      _atp: {
+        origin: 'claude',
+        source: {
+          type: 'assistant',
+          uuid: 'source-ctx',
+          parentUuid: null,
+          sessionId: 'mixed-session',
+          cwd: '/tmp/mixed',
+          gitBranch: 'feature/mixed',
+          version: '1.2.3',
+          timestamp: '2026-04-13T12:39:00.000Z',
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'restored source entry' }],
+          },
+        },
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:41:00.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'assistant',
+        content: [{ type: 'output_text', text: 'native tail' }],
+      },
+    },
+  ] as CodexRolloutLine[])
+
+  const stampedTail = mixedClaude.find(
+    entry =>
+      entry.type === 'assistant' &&
+      Array.isArray(entry.message?.content) &&
+      entry.message.content.some(
+        block => block.type === 'text' && block.text === 'native tail',
+      ),
+  )
+
+  check(
+    'sidecar short-circuit refreshes Claude session context for later stamped entries',
+    stampedTail?.sessionId === 'mixed-session' &&
+      stampedTail?.cwd === '/tmp/mixed' &&
+      stampedTail?.gitBranch === 'feature/mixed' &&
+      stampedTail?.version === '1.2.3',
   )
 }
 

@@ -46,7 +46,7 @@ export function toCodex(
   const out: CodexRolloutLine[] = []
 
   let sessionMetaEmitted = false
-  const seenSourceUuids = new Set<string>()
+  const seenSourceKeys = new Set<string>()
 
   // Turn-boundary state. Codex's replay pipeline (see
   // codex-rs/app-server-protocol/src/protocol/thread_history.rs)
@@ -90,14 +90,13 @@ export function toCodex(
     const sidecar = readSidecar(entry)
     if (sidecar?.origin === 'codex') {
       const source = sidecar.source
-      const sourceKey = JSON.stringify({
-        timestamp: source.timestamp,
-        type: source.type,
-      })
-      if (seenSourceUuids.has(sourceKey)) continue
-      seenSourceUuids.add(sourceKey)
+      const sourceKey = JSON.stringify(source)
+      if (seenSourceKeys.has(sourceKey)) continue
+      seenSourceKeys.add(sourceKey)
       out.push(source)
       if (source.type === 'session_meta') sessionMetaEmitted = true
+      const sourceCwd = codexLineCwd(source)
+      if (sourceCwd) turnCwd = sourceCwd
       continue
     }
 
@@ -125,16 +124,16 @@ export function toCodex(
         id: stableUuid([entry.sessionId ?? '', entry.uuid ?? '', 'turn']),
         lastAgentMessage: '',
       }
-      const startedAtSec = Math.floor(
-        Date.parse(entry.timestamp) / 1000,
-      ) || 0
+      const parsedStartedAt = Date.parse(entry.timestamp)
       out.push(markSynth({
         timestamp: entry.timestamp,
         type: 'event_msg',
         payload: {
           type: 'task_started',
           turn_id: openTurn.id,
-          started_at: startedAtSec,
+          ...(Number.isFinite(parsedStartedAt)
+            ? { started_at: Math.floor(parsedStartedAt / 1000) }
+            : {}),
           model_context_window: 272000,
           collaboration_mode_kind: 'default',
         },
@@ -332,8 +331,12 @@ function mapUserEntry(entry: ClaudeEntry): CodexRolloutLine[] {
       textParts.push(text)
     } else if (block.type === 'tool_result') {
       lines.push(emitToolResult(entry, block as ClaudeToolResultBlock))
+    } else {
+      const fallback = summarizeNonTextUserBlock(block)
+      if (!fallback) continue
+      textItems.push({ type: 'input_text', text: fallback })
+      textParts.push(fallback)
     }
-    // Unknown user-side blocks are dropped.
   }
 
   if (textItems.length > 0) {
@@ -372,7 +375,7 @@ function emitToolResult(
   block: ClaudeToolResultBlock,
 ): CodexRolloutLine {
   const kind = (block.codex?.kind as string | undefined) ?? 'function_call_output'
-  const content = typeof block.content === 'string' ? block.content : ''
+  const content = stringifyToolResultContent(block.content)
   const metadata = block.codex?.metadata as Record<string, unknown> | undefined
 
   if (kind === 'custom_tool_call_output') {
@@ -403,6 +406,81 @@ function emitToolResult(
       output: content,
     },
   }
+}
+
+function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
+  // Claude user turns can contain image/document blocks from pasted files.
+  // Dropping those silently in lossy mode erases user intent entirely.
+  // We preserve a compact textual marker instead so Codex still records
+  // that the user supplied non-text context, even when we cannot recreate
+  // the exact multimodal payload natively.
+  if (block.type === 'image') {
+    const sourceValue = (block as { source?: unknown }).source
+    const sourceRecord = isRecord(sourceValue) ? sourceValue : null
+    const source =
+      sourceRecord && typeof sourceRecord.media_type === 'string'
+        ? sourceRecord.media_type
+        : 'image'
+    return `[User attached image: ${source}]`
+  }
+  if (block.type === 'document') {
+    const title =
+      typeof (block as { title?: unknown }).title === 'string'
+        ? (block as { title?: string }).title
+        : 'document'
+    return `[User attached document: ${title}]`
+  }
+  return null
+}
+
+function codexLineCwd(line: CodexRolloutLine): string | undefined {
+  if (
+    line.type === 'session_meta' &&
+    typeof line.payload.cwd === 'string' &&
+    line.payload.cwd.length > 0
+  ) {
+    return line.payload.cwd
+  }
+  if (
+    line.type === 'turn_context' &&
+    typeof line.payload.cwd === 'string' &&
+    line.payload.cwd.length > 0
+  ) {
+    return line.payload.cwd
+  }
+  return undefined
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null
+}
+
+function stringifyToolResultContent(
+  content: ClaudeToolResultBlock['content'],
+): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return ''
+
+  const parts = content.flatMap(item => {
+    if (!item || typeof item !== 'object') return []
+    if (item.type === 'text' && typeof item.text === 'string') {
+      return item.text
+    }
+    if (item.type === 'image') return '[image]'
+    if (item.type === 'document') return '[document]'
+    if (item.type === 'search_result') {
+      const title =
+        typeof item.title === 'string'
+          ? item.title
+          : typeof item.url === 'string'
+            ? item.url
+            : 'search result'
+      return `[search_result: ${title}]`
+    }
+    return []
+  })
+
+  return parts.join('\n').trim()
 }
 
 // ---------------------------------------------------------------------------

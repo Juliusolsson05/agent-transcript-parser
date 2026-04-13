@@ -541,6 +541,8 @@ Important improvement:
   item types (`text`, `image`, `document`, `search_result`), the translator now
   preserves them as rich Claude `tool_result.content` instead of flattening
   everything to text
+- in the reverse lossy direction, Claude `tool_result.content` arrays are now
+  flattened into readable Codex output text instead of disappearing entirely
 
 Known gaps:
 
@@ -684,10 +686,13 @@ Current mapping:
   - emits both `event_msg:user_message` and `response_item:message`
 - `tool_result` blocks:
   - emits `function_call_output` or `custom_tool_call_output`
+- image/document user blocks in lossy mode:
+  - emit textual fallback markers inside the translated Codex user message
 
 Status:
 
 - `native` for plain text and direct tool-result blocks
+- `summary fallback` for multimodal user blocks in lossy mode
 
 Known gaps:
 
@@ -700,6 +705,9 @@ Known gaps:
   - `sourceToolAssistantUUID`
   - `sourceToolUseID`
   - `toolUseResult`
+- Claude -> Codex still does not map image/document user content into Codex's
+  richer native image-bearing user-message fields; current behavior is a
+  textual marker so user intent is not silently erased
 
 ### `assistant`
 

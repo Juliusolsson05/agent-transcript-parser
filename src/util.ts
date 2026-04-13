@@ -127,5 +127,13 @@ export function normalizeOutput(
       ...(richContent.length > 0 ? { richContent } : {}),
     }
   }
+  // Unexpected object-shaped outputs do show up in the wild from tool wrappers
+  // and partial protocol adapters. Returning an empty string here makes that
+  // payload disappear completely in lossy paths, which is worse than a noisy
+  // JSON blob. Keep the raw object visible so downstream mappers at least have
+  // some textual evidence of what was returned.
+  if (raw && typeof raw === 'object') {
+    return { text: JSON.stringify(raw) }
+  }
   return { text: '' }
 }

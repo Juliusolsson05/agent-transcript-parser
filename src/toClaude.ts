@@ -265,6 +265,7 @@ export function toClaude(
       }
       if (source.uuid) seenSourceUuids.add(source.uuid)
       out.push(source)
+      absorbClaudeSourceContext(ctx, source)
       ctx.parentUuid = source.uuid ?? ctx.parentUuid
       ctx.index++
       continue
@@ -277,6 +278,27 @@ export function toClaude(
   }
 
   return out
+}
+
+function absorbClaudeSourceContext(ctx: Ctx, source: ClaudeEntry): void {
+  // Sidecar short-circuit restores the original Claude entry byte-for-byte,
+  // but the converter still keeps walking forward and may need to stamp later
+  // non-sidecar entries. If we do not refresh the mutable context here, those
+  // later stamped entries inherit stale session/cwd/git metadata from before
+  // the short-circuited source, which creates mixed transcripts whose tail is
+  // threaded against the wrong Claude session context.
+  if (typeof source.sessionId === 'string' && source.sessionId.length > 0) {
+    ctx.sessionId = source.sessionId
+  }
+  if (typeof source.cwd === 'string' && source.cwd.length > 0) {
+    ctx.cwd = source.cwd
+  }
+  if (typeof source.gitBranch === 'string' && source.gitBranch.length > 0) {
+    ctx.gitBranch = source.gitBranch
+  }
+  if (typeof source.version === 'string' && source.version.length > 0) {
+    ctx.version = source.version
+  }
 }
 
 // ---------------------------------------------------------------------------
