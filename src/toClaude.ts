@@ -14,7 +14,6 @@ import type {
   ClaudeEntry,
   ClaudeMessage,
   ClaudeTextBlock,
-  ClaudeThinkingBlock,
   ClaudeToolResultBlock,
   ClaudeToolUseBlock,
   CodexCustomToolCallOutputPayload,
@@ -811,19 +810,35 @@ function mapReasoning(
     .map(s => (typeof s.text === 'string' ? s.text : ''))
     .filter(Boolean)
     .join('\n\n')
-  const block: ClaudeThinkingBlock = {
-    type: 'thinking',
-    thinking: text,
-    ...(payload.encrypted_content || payload.id
-      ? {
-          codex: {
-            ...(payload.id ? { id: payload.id } : {}),
-            ...(payload.encrypted_content
-              ? { encrypted_content: payload.encrypted_content }
-              : {}),
-          },
-        }
-      : {}),
+
+  // Why NOT a `thinking` block:
+  //
+  // Claude's API requires every `thinking` block in assistant history to
+  // carry a `signature` — an opaque server-generated token Anthropic
+  // issues as cryptographic proof the thinking came from their
+  // inference path. The API rejects with 400
+  // ("messages.N.content.0.thinking.signature: Field required") when a
+  // thinking block is sent back without one. Codex reasoning has NO
+  // such signature and we cannot fabricate one, so emitting a
+  // translator-synthesized `thinking` block poisons every downstream
+  // resume.
+  //
+  // Claude's normalizer (utils/messages.ts filterTrailingThinkingFromLastAssistant,
+  // filterOrphanedThinkingOnlyMessages) strips a few narrow cases but
+  // does NOT blanket-remove unsigned thinking blocks mid-stream — so
+  // we must not emit them in the first place.
+  //
+  // The chosen fallback is a plain text block, prefixed with a visible
+  // "Reasoning:" marker so the renderer (and the model on next turn)
+  // can still see the content but the API never inspects it as a
+  // thinking block. Full round-trip fidelity is preserved via the
+  // `_atp` sidecar on the containing entry — toCodex's sidecar
+  // short-circuit restores the original `reasoning` payload byte-for-
+  // byte. Lossy mode accepts the one-way conversion to text as the
+  // cost of API safety.
+  const block: ClaudeTextBlock = {
+    type: 'text',
+    text: text ? `Reasoning: ${text}` : 'Reasoning: (no summary provided)',
   }
   return stamp(ctx, {
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'reasoning']),

@@ -1134,6 +1134,59 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 }
 
 {
+  // Translated Codex reasoning MUST NOT produce a Claude `thinking`
+  // block — Anthropic's API requires a server-issued signature on
+  // every thinking block in assistant history, and translator-
+  // synthesized reasoning has none. A 400 with
+  // "messages.N.content.0.thinking.signature: Field required" is the
+  // exact failure mode we're preventing. We emit a plain text block
+  // prefixed with "Reasoning: " instead.
+  const reasoningRollout: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-14T10:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-reasoning-guard',
+        timestamp: '2026-04-14T10:00:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-14T10:00:01.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'reasoning',
+        id: 'rs_1',
+        summary: [
+          { type: 'summary_text', text: '**Preparing read approach**' },
+        ],
+      },
+    },
+  ]
+
+  const translated = toClaude(reasoningRollout, { lossy: true })
+  const reasoningEntry = translated.find(e => e.type === 'assistant')
+  const blocks = Array.isArray(reasoningEntry?.message?.content)
+    ? reasoningEntry?.message?.content
+    : []
+
+  check(
+    'translated Codex reasoning does not emit an unsigned Claude thinking block',
+    !blocks.some(b => b.type === 'thinking'),
+  )
+  check(
+    'translated Codex reasoning becomes a text block with a Reasoning: prefix',
+    blocks.some(
+      b =>
+        b.type === 'text' &&
+        typeof (b as { text?: string }).text === 'string' &&
+        (b as { text: string }).text.startsWith('Reasoning: ') &&
+        (b as { text: string }).text.includes('Preparing read approach'),
+    ),
+  )
+}
+
+{
   const todoReminder: ClaudeEntry = {
     type: 'attachment',
     uuid: 'att-15',
