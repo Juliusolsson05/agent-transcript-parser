@@ -51,8 +51,9 @@ export function parseToolInput(raw: string): unknown {
  * string plus extracted metadata.
  *
  *   - string output → { text, metadata: undefined }
- *   - custom_tool_call_output (JSON-wrapped: `{output, metadata}`) →
- *     unwrap; text = parsed.output, metadata = parsed.metadata
+ *   - legacy custom_tool_call_output (JSON-wrapped:
+ *     `{output, metadata}`) → unwrap; text = parsed.output,
+ *     metadata = parsed.metadata
  *   - array output with text blocks → concatenate texts; last
  *     metadata object wins
  *

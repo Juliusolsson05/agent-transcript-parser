@@ -572,6 +572,14 @@ Current mapping:
 - special case:
   - `apply_patch` also emits Claude `attachment` entries of type `edited_text_file`
 
+Native shape notes:
+
+- on the Codex wire, `output` uses the same encoding as `function_call_output`
+  - plain string, or
+  - array of content items
+- translator now emits bare text on the Codex side instead of the older
+  JSON-wrapped `{ output, metadata }` compatibility blob
+
 Status:
 
 - `summary fallback`
@@ -592,6 +600,8 @@ Current mapping:
 
 - maps to Claude `thinking` block
 - preserves Codex reasoning metadata in `block.codex`
+- when translating Claude thinking back to Codex, emits
+  `summary: [{ type: 'summary_text', text }]`
 
 Status:
 

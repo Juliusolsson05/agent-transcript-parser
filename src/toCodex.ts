@@ -376,14 +376,16 @@ function emitToolResult(
 ): CodexRolloutLine {
   const kind = (block.codex?.kind as string | undefined) ?? 'function_call_output'
   const content = stringifyToolResultContent(block.content)
-  const metadata = block.codex?.metadata as Record<string, unknown> | undefined
 
   if (kind === 'custom_tool_call_output') {
-    // Reconstruct the JSON-wrapped output form custom tools use.
-    const wrapped = JSON.stringify({
-      output: content,
-      ...(metadata ? { metadata } : {}),
-    })
+    // Codex serializes custom_tool_call_output exactly like its other tool
+    // outputs: `output` is the wire payload body itself, not a JSON-wrapped
+    // envelope. Keeping the payload bare avoids native Codex renderers
+    // showing a stringified `{ output, metadata }` blob in lossy mode.
+    //
+    // Fidelity metadata still lives on the Claude-side block via
+    // `block.codex`, so round-trip mode can preserve it without polluting
+    // the native Codex transcript shape.
     return {
       timestamp: entry.timestamp,
       type: 'response_item',
@@ -391,7 +393,7 @@ function emitToolResult(
         type: 'custom_tool_call_output',
         call_id: block.tool_use_id,
         ...(block.codex?.name ? { name: block.codex.name as string } : {}),
-        output: wrapped,
+        output: content,
       },
     }
   }
@@ -1052,7 +1054,7 @@ function emitReasoning(
       type: 'reasoning',
       ...(id ? { id } : {}),
       summary: block.thinking
-        ? [{ type: 'text', text: block.thinking }]
+        ? [{ type: 'summary_text', text: block.thinking }]
         : [],
       ...(encrypted ? { encrypted_content: encrypted } : {}),
     },

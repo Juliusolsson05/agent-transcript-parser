@@ -54,6 +54,39 @@ type Ctx = {
   parentUuid: string | null
   index: number
   lossy: boolean
+  /**
+   * Claude's `normalizeMessagesForAPI` groups adjacent assistant entries
+   * into a single API message when their `message.id` matches, walking
+   * BACKWARD across tool_result-only user messages (see
+   * claude-code-src/full/utils/messages.ts:2257 — `isToolResultMessage`
+   * lets the walk-back skip user tool_result turns).
+   *
+   * Two failure modes this id must navigate:
+   *
+   *   A. All translated assistants omit `message.id`. Then
+   *      `undefined === undefined` merges assistants ACROSS logical
+   *      turns (tool_result-only users are transparent to the walk).
+   *      Not always fatal — pairing usually survives because consecutive
+   *      users merge too — but it is a latent hazard.
+   *
+   *   B. Every translated assistant gets a UNIQUE id (Codex's first
+   *      attempt). Then Codex parallel tool calls — N `function_call`
+   *      items in a row with no interleaving user — stop merging and
+   *      Claude's `ensureToolResultPairing` sees each assistant with
+   *      tool_use followed by another assistant, synthesizes fake
+   *      `is_error: true` tool_result stubs, and strips the real
+   *      tool_results as "orphaned" (messages.ts:5161-5199). Valid
+   *      wire shape, but the real tool outputs are DESTROYED.
+   *
+   * Correct rule: all assistants that belong to the SAME logical turn
+   * share one `message.id`. A new logical turn begins when we see a
+   * `response_item:message` with role=user (the next user prompt).
+   * Tool-call/tool-output response items within that turn keep the
+   * current id, so parallel tool_use emissions merge correctly. A
+   * compact boundary also resets because Codex's conversation restarts
+   * around it.
+   */
+  turnMessageId: string | null
   callInfo: Map<
     string,
     {
@@ -74,8 +107,36 @@ function newCtx(lossy: boolean): Ctx {
     parentUuid: null,
     index: 0,
     lossy,
+    turnMessageId: null,
     callInfo: new Map(),
   }
+}
+
+/**
+ * Return the shared synthetic Claude `message.id` for the current Codex
+ * logical turn. Lazily allocates one on first assistant emission after
+ * a turn boundary — this keeps the id stable across every assistant
+ * entry the translator emits within the same turn (parallel tool
+ * calls, text+tool_use, reasoning+tool_use, etc.) so Claude's
+ * normalizer merges them into one API message.
+ *
+ * The id is derived from (sessionId, line.timestamp of the emission
+ * that created it, a bump counter) so repeat runs of the translator
+ * against the same rollout produce identical ids. Using `ctx.index`
+ * as the counter would work too but couples the id to emission order;
+ * a dedicated bump field makes the id stable under refactors that
+ * change when `ctx.index` is incremented.
+ */
+function currentTurnMessageId(ctx: Ctx, line: CodexRolloutLine): string {
+  if (ctx.turnMessageId === null) {
+    ctx.turnMessageId = syntheticClaudeMessageId([
+      ctx.sessionId,
+      line.timestamp,
+      ctx.index,
+      'turn',
+    ])
+  }
+  return ctx.turnMessageId
 }
 
 function summarizeToolCall(name: string, input: unknown): string {
@@ -168,6 +229,15 @@ function extractApplyPatchFiles(input: unknown): string[] {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
+}
+
+function syntheticClaudeMessageId(parts: Array<string | number>): string {
+  // `msg_<hex>` is the shape Anthropic itself uses for assistant message
+  // ids. Matching it keeps any downstream tool that regex-matches
+  // Anthropic ids happy — callers of this helper should pass inputs
+  // that are stable across repeat translations of the same rollout so
+  // the id is deterministic.
+  return `msg_${stableUuid(parts).replace(/-/g, '')}`
 }
 
 /** Attach sidecar unless ctx.lossy. Also advances ctx.parentUuid +
@@ -299,6 +369,17 @@ function absorbClaudeSourceContext(ctx: Ctx, source: ClaudeEntry): void {
   if (typeof source.version === 'string' && source.version.length > 0) {
     ctx.version = source.version
   }
+  // The short-circuited source carries its own `message.id` (real
+  // Anthropic-issued in most cases). Adopt it as the current turn id
+  // when the source is an assistant entry with an id — then any
+  // follow-on translated assistant emissions from the SAME turn still
+  // merge with it. For non-assistant sources (user, attachment, etc.)
+  // we clear the turn id so the next assistant allocates a fresh one.
+  const sourceMid =
+    source.type === 'assistant'
+      ? (source.message as { id?: string } | undefined)?.id
+      : undefined
+  ctx.turnMessageId = typeof sourceMid === 'string' ? sourceMid : null
 }
 
 // ---------------------------------------------------------------------------
@@ -366,10 +447,16 @@ function mapSessionMeta(ctx: Ctx, payload: CodexSessionMetaPayload): void {
   if (payload.cwd) ctx.cwd = payload.cwd
   if (payload.git?.branch) ctx.gitBranch = payload.git.branch
   if (payload.cli_version) ctx.version = payload.cli_version
+  // New session: drop any turn id from whatever came before.
+  ctx.turnMessageId = null
 }
 
 function mapTurnContext(ctx: Ctx, payload: CodexTurnContextPayload): void {
   if (payload.cwd) ctx.cwd = payload.cwd
+  // turn_context is Codex's explicit "new turn starting" signal.
+  // Force a fresh assistant id so the coming turn never merges with
+  // whatever tool_use emissions accumulated in the previous one.
+  ctx.turnMessageId = null
 }
 
 // ---------------------------------------------------------------------------
@@ -445,10 +532,24 @@ function mapMessage(
   }
   if (blocks.length === 0) return []
 
+  // A user-text message marks a logical turn boundary — the next
+  // assistant emission belongs to a new turn and needs a fresh id.
+  // We reset BEFORE assembling the message so an assistant text
+  // message emitted in the same stream (rare, but Codex can emit
+  // developer/assistant messages right after a user prompt) picks up
+  // the new id via currentTurnMessageId below.
+  if (role === 'user') {
+    ctx.turnMessageId = null
+  }
+
   const message: ClaudeMessage = {
     role,
     content: blocks,
-    ...(payload.id ? { id: payload.id } : {}),
+    ...(role === 'assistant'
+      ? { id: currentTurnMessageId(ctx, line) }
+      : payload.id
+        ? { id: payload.id }
+        : {}),
   }
 
   return [
@@ -489,6 +590,7 @@ function mapFunctionCall(
       type: 'assistant',
       message: {
         role: 'assistant',
+        id: currentTurnMessageId(ctx, line),
         content: [
           {
             type: 'text',
@@ -512,7 +614,11 @@ function mapFunctionCall(
     uuid,
     timestamp: line.timestamp,
     type: 'assistant',
-    message: { role: 'assistant', content: [block] },
+    message: {
+      role: 'assistant',
+      id: currentTurnMessageId(ctx, line),
+      content: [block],
+    },
   })
 }
 
@@ -605,6 +711,7 @@ function mapCustomToolCall(
     type: 'assistant',
     message: {
       role: 'assistant',
+      id: currentTurnMessageId(ctx, line),
       content: [
         {
           type: 'text',
@@ -722,7 +829,11 @@ function mapReasoning(
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'reasoning']),
     timestamp: line.timestamp,
     type: 'assistant',
-    message: { role: 'assistant', content: [block] },
+    message: {
+      role: 'assistant',
+      id: currentTurnMessageId(ctx, line),
+      content: [block],
+    },
   })
 }
 
@@ -780,7 +891,11 @@ function mapLocalShellCall(
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'local_shell_call']),
     timestamp: line.timestamp,
     type: 'assistant',
-    message: { role: 'assistant', content: [block] },
+    message: {
+      role: 'assistant',
+      id: currentTurnMessageId(ctx, line),
+      content: [block],
+    },
   })
 }
 
@@ -803,7 +918,11 @@ function mapWebSearchCall(
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'web_search']),
     timestamp: line.timestamp,
     type: 'assistant',
-    message: { role: 'assistant', content: [block] },
+    message: {
+      role: 'assistant',
+      id: currentTurnMessageId(ctx, line),
+      content: [block],
+    },
   })
 }
 
@@ -843,6 +962,7 @@ function mapToolSearchCall(
     type: 'assistant',
     message: {
       role: 'assistant',
+      id: currentTurnMessageId(ctx, line),
       content: [
         {
           type: 'text',
@@ -976,7 +1096,11 @@ function mapEventMsg(
         uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'exec_approval', p.call_id]),
         timestamp: line.timestamp,
         type: 'assistant',
-        message: { role: 'assistant', content: [block] },
+        message: {
+          role: 'assistant',
+          id: currentTurnMessageId(ctx, line),
+          content: [block],
+        },
       }),
     ]
   }
@@ -1002,6 +1126,11 @@ function mapEventMsg(
 // ---------------------------------------------------------------------------
 
 function mapCompacted(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry {
+  // A compact boundary restarts Codex's conversation — the assistant
+  // messages on either side belong to different logical turns and must
+  // not merge. Dropping the current turn id forces the next assistant
+  // emission to allocate a fresh one.
+  ctx.turnMessageId = null
   return stamp(ctx, {
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'compacted']),
     timestamp: line.timestamp,

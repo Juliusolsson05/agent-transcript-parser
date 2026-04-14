@@ -859,7 +859,147 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
             typeof block.text === 'string' &&
             block.text.includes('Tool search returned 1 result.'),
         ),
-    ),
+      ),
+  )
+}
+
+{
+  const codexToolCycle: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-13T12:30:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-merge-guard',
+        timestamp: '2026-04-13T12:30:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:01.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'pwd' }),
+        call_id: 'call-a',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:02.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        call_id: 'call-a',
+        output: 'Process exited with code 0\nOutput:\n/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:03.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'git status --short' }),
+        call_id: 'call-b',
+      },
+    },
+  ]
+
+  const claude = toClaude(codexToolCycle, { lossy: true })
+  const assistantIds = claude
+    .filter(entry => entry.type === 'assistant')
+    .map(entry => entry.message?.id)
+
+  check(
+    'translated assistant messages get explicit Claude message ids',
+    assistantIds.every(id => typeof id === 'string' && id.startsWith('msg_')),
+  )
+  // All assistant emissions inside ONE Codex logical turn (no
+  // intervening user text) must share a single `message.id` so Claude's
+  // normalizeMessagesForAPI merges them into one API assistant message
+  // with parallel tool_use blocks. Per-item unique ids break that merge
+  // and trigger ensureToolResultPairing to synthesize fake error
+  // tool_results, destroying the real tool outputs on resume.
+  check(
+    'assistant emissions within one logical turn share a single message.id',
+    new Set(assistantIds).size === 1,
+  )
+}
+
+{
+  // Second tool cycle driven by a NEW user prompt must allocate a FRESH
+  // `message.id` distinct from the first turn's — otherwise the merge
+  // walk-back in normalizeMessagesForAPI would cross the user-text
+  // barrier (it doesn't — `isToolResultMessage` returns false for user
+  // text — but an id collision would still look suspicious to anything
+  // that inspects ids downstream).
+  const twoTurns: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-13T12:30:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-turn-boundary',
+        timestamp: '2026-04-13T12:30:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:01.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'first prompt' }],
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:02.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'pwd' }),
+        call_id: 'call-turn1-a',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:03.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call_output',
+        call_id: 'call-turn1-a',
+        output: 'ok',
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:10.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'second prompt' }],
+      },
+    },
+    {
+      timestamp: '2026-04-13T12:30:11.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'ls' }),
+        call_id: 'call-turn2-a',
+      },
+    },
+  ]
+
+  const claude = toClaude(twoTurns, { lossy: true })
+  const asstIds = claude
+    .filter(entry => entry.type === 'assistant')
+    .map(entry => entry.message?.id)
+
+  check(
+    'assistant emissions in DIFFERENT turns get different message.ids',
+    asstIds.length === 2 && asstIds[0] !== asstIds[1],
   )
 }
 
@@ -922,6 +1062,73 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
         (line.payload as { type?: string }).type === 'user_message' &&
         typeof (line.payload as { message?: string }).message === 'string' &&
         (line.payload as { message: string }).message.includes('[User attached image: image/png]'),
+      ),
+  )
+}
+
+{
+  const reasoningClaude: ClaudeEntry = {
+    type: 'assistant',
+    uuid: 'reasoning-1',
+    parentUuid: null,
+    sessionId: 'sess-reasoning',
+    timestamp: '2026-04-13T12:25:00.000Z',
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'thinking',
+          thinking: '**Preparing file read approach**',
+        },
+      ],
+    },
+  }
+
+  const customToolResultClaude: ClaudeEntry = {
+    type: 'user',
+    uuid: 'custom-tool-result-1',
+    parentUuid: null,
+    sessionId: 'sess-custom-tool-result',
+    timestamp: '2026-04-13T12:26:00.000Z',
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'custom-call-1',
+          content: 'tool returned plain text',
+          codex: {
+            kind: 'custom_tool_call_output',
+            metadata: {
+              exit_code: 1,
+            },
+          },
+        },
+      ],
+    },
+  }
+
+  const reasoningCodex = toCodex([reasoningClaude], { lossy: true })
+  const customToolResultCodex = toCodex([customToolResultClaude], { lossy: true })
+
+  check(
+    'Claude thinking emits Codex summary_text reasoning summaries',
+    reasoningCodex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string }).type === 'reasoning' &&
+        Array.isArray((line.payload as { summary?: unknown }).summary) &&
+        (line.payload as { summary: Array<{ type?: string }> }).summary[0]?.type ===
+          'summary_text',
+    ),
+  )
+  check(
+    'custom_tool_call_output emits bare text output instead of wrapped JSON',
+    customToolResultCodex.some(
+      line =>
+        line.type === 'response_item' &&
+        (line.payload as { type?: string }).type === 'custom_tool_call_output' &&
+        (line.payload as { output?: unknown }).output === 'tool returned plain text',
     ),
   )
 }
