@@ -14,8 +14,15 @@
 export const ATP_KEY = '_atp' as const
 
 export type AtpSidecar =
-  | { origin: 'claude'; source: ClaudeEntry }
-  | { origin: 'codex'; source: CodexRolloutLine }
+  // `source` may be a single original record OR an ARRAY of records.
+  // Arrays appear after toClaude's post-pass coalesces multiple Codex
+  // response_items into one Claude entry (e.g. N parallel function_calls
+  // into one assistant with N tool_use blocks). On reverse trip, toCodex
+  // iterates the array to restore the original N-item stream, so the
+  // coalescing preserves byte-identical round-trip while producing
+  // on-disk JSONL that matches Claude's native bulk-turn shape.
+  | { origin: 'claude'; source: ClaudeEntry | ClaudeEntry[] }
+  | { origin: 'codex'; source: CodexRolloutLine | CodexRolloutLine[] }
   /**
    * A record that was SYNTHESIZED by the converter, not derived from
    * any source. Used by toCodex when prepending a session_meta line

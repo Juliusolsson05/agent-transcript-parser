@@ -1187,6 +1187,121 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 }
 
 {
+  // Parallel-tool-call coalescing test: 3 Codex function_calls in a
+  // row (no intervening user) must collapse into ONE Claude assistant
+  // with 3 tool_use blocks on disk, paired with ONE user holding all
+  // 3 tool_results. This is the shape the Anthropic API wants and
+  // doesn't depend on Claude's normalizeMessagesForAPI to merge for us.
+  const parallelCalls: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-14T11:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-coalesce',
+        timestamp: '2026-04-14T11:00:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-14T11:00:01.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'message',
+        role: 'user',
+        content: [{ type: 'input_text', text: 'run stuff in parallel' }],
+      },
+    },
+    {
+      timestamp: '2026-04-14T11:00:02.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'pwd' }),
+        call_id: 'call-par-a',
+      },
+    },
+    {
+      timestamp: '2026-04-14T11:00:03.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'ls' }),
+        call_id: 'call-par-b',
+      },
+    },
+    {
+      timestamp: '2026-04-14T11:00:04.000Z',
+      type: 'response_item',
+      payload: {
+        type: 'function_call',
+        name: 'exec_command',
+        arguments: JSON.stringify({ cmd: 'whoami' }),
+        call_id: 'call-par-c',
+      },
+    },
+    {
+      timestamp: '2026-04-14T11:00:05.000Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call-par-a', output: 'a' },
+    },
+    {
+      timestamp: '2026-04-14T11:00:06.000Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call-par-b', output: 'b' },
+    },
+    {
+      timestamp: '2026-04-14T11:00:07.000Z',
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'call-par-c', output: 'c' },
+    },
+  ]
+
+  const translated = toClaude(parallelCalls)
+  const assistants = translated.filter(e => e.type === 'assistant')
+  const users = translated.filter(
+    e =>
+      e.type === 'user' &&
+      Array.isArray(e.message?.content) &&
+      (e.message.content as Array<{ type?: string }>).some(b => b.type === 'tool_result'),
+  )
+
+  const bigAssistant = assistants[assistants.length - 1]
+  const bigAssistantToolUses = Array.isArray(bigAssistant?.message?.content)
+    ? (bigAssistant?.message?.content as Array<{ type?: string }>).filter(
+        b => b.type === 'tool_use',
+      )
+    : []
+
+  check(
+    'parallel function_calls coalesce into one assistant with 3 tool_use blocks',
+    bigAssistantToolUses.length === 3,
+  )
+  check(
+    'paired tool_results coalesce into one user message with 3 tool_result blocks',
+    users.length === 1 &&
+      Array.isArray(users[0]?.message?.content) &&
+      (users[0]?.message?.content as Array<{ type?: string }>).filter(
+        b => b.type === 'tool_result',
+      ).length === 3,
+  )
+
+  // Round-trip: the coalesced sidecar `source` array must unpack so
+  // toCodex re-emits all three original function_call lines.
+  const rt = toCodex(translated)
+  const fcLines = rt.filter(
+    l =>
+      l.type === 'response_item' &&
+      (l.payload as { type?: string }).type === 'function_call',
+  )
+  check(
+    'coalesced sidecar round-trips back to 3 original function_call lines',
+    fcLines.length === 3,
+  )
+}
+
+{
   const todoReminder: ClaudeEntry = {
     type: 'attachment',
     uuid: 'att-15',

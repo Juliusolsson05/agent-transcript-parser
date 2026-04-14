@@ -346,7 +346,171 @@ export function toClaude(
     }
   }
 
+  // Post-pass: coalesce adjacent entries into the bulk-turn shape Claude
+  // itself writes natively. This matters because Claude's resume pipeline
+  // does its OWN merging in normalizeMessagesForAPI, and any edge case in
+  // that path — attachment reordering breaking adjacency, a rogue
+  // non-tool-result user, the ensureToolResultPairing pass synthesizing
+  // fake error stubs — can desync tool_use / tool_result pairing and
+  // surface as "API Error: 400 due to tool use concurrency issues" at
+  // resume time. By pre-merging on our side we remove that dependency:
+  // the JSONL on disk already looks the way Claude would have written
+  // the same conversation natively.
+  //
+  // Round-trip fidelity is preserved via the sidecar array variant —
+  // when two entries merge, their Codex sources concatenate into
+  // `_atp.source` as an array. toCodex iterates that array on reverse.
+  return coalesceForClaudeApiShape(out)
+}
+
+/**
+ * Merge adjacent emitted entries into the bulk-turn shape Claude
+ * writes natively. See the comment in toClaude for why this matters
+ * for `claude --resume` safety.
+ *
+ * Merge rules:
+ *
+ *   - Two adjacent `assistant` entries whose `message.id` is set and
+ *     equal collapse into one — their content arrays concatenate in
+ *     order. If either lacks a `message.id` we refuse to merge
+ *     (matching Claude's own normalizeMessagesForAPI identity check,
+ *     which compares ids via `===` and would treat `undefined` as a
+ *     distinct identity).
+ *
+ *   - Two adjacent `user` entries whose `message.content` is an array
+ *     containing at least one `tool_result` block collapse into one —
+ *     their content concatenates, tool_results first (matches Claude's
+ *     hoistToolResults behavior). We require BOTH messages to be tool-
+ *     result users so plain user prompts don't accidentally merge into
+ *     prior tool-result turns.
+ *
+ *   - Sidecar preservation: the merged entry's `_atp.source` becomes
+ *     the concatenation of each contributor's source (wrapped into an
+ *     array). On reverse-trip, toCodex's short-circuit iterates the
+ *     array and re-emits each original record. This keeps round-trip
+ *     byte-identical even for coalesced entries.
+ *
+ *   - Sidecar origin must match (both 'codex' or both 'claude') — we
+ *     never mix origins across a merge. If origins differ we leave the
+ *     entries as-is.
+ *
+ * The pass is O(n) with a single left-to-right walk.
+ */
+function coalesceForClaudeApiShape(entries: ClaudeEntry[]): ClaudeEntry[] {
+  if (entries.length < 2) return entries
+  const out: ClaudeEntry[] = []
+  for (const entry of entries) {
+    const prev = out.length > 0 ? out[out.length - 1] : undefined
+    if (prev && canMergeAssistants(prev, entry)) {
+      out[out.length - 1] = mergeAssistants(prev, entry)
+      continue
+    }
+    if (prev && canMergeToolResultUsers(prev, entry)) {
+      out[out.length - 1] = mergeUsers(prev, entry)
+      continue
+    }
+    out.push(entry)
+  }
   return out
+}
+
+function canMergeAssistants(a: ClaudeEntry, b: ClaudeEntry): boolean {
+  if (a.type !== 'assistant' || b.type !== 'assistant') return false
+  const ida = a.message?.id
+  const idb = b.message?.id
+  // Both must have explicit ids and match. We never merge on undefined
+  // because a missing id is semantically "unknown identity", not a
+  // universal wildcard — that was the root of the original 400.
+  if (typeof ida !== 'string' || typeof idb !== 'string') return false
+  if (ida !== idb) return false
+  // Only merge entries with compatible sidecar origins (both codex,
+  // both claude, or both missing). Refuse to mix.
+  return sidecarOriginCompatible(a, b)
+}
+
+function canMergeToolResultUsers(a: ClaudeEntry, b: ClaudeEntry): boolean {
+  if (a.type !== 'user' || b.type !== 'user') return false
+  const ac = a.message?.content
+  const bc = b.message?.content
+  if (!Array.isArray(ac) || !Array.isArray(bc)) return false
+  const hasTr = (blocks: unknown[]) =>
+    blocks.some(
+      b => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_result',
+    )
+  if (!hasTr(ac) || !hasTr(bc)) return false
+  return sidecarOriginCompatible(a, b)
+}
+
+function sidecarOriginCompatible(a: ClaudeEntry, b: ClaudeEntry): boolean {
+  const sa = readSidecar(a)
+  const sb = readSidecar(b)
+  if (!sa && !sb) return true
+  if (!sa || !sb) return false
+  return sa.origin === sb.origin
+}
+
+function mergeAssistants(a: ClaudeEntry, b: ClaudeEntry): ClaudeEntry {
+  const aContent = Array.isArray(a.message?.content) ? a.message.content : []
+  const bContent = Array.isArray(b.message?.content) ? b.message.content : []
+  return {
+    ...a,
+    message: {
+      ...(a.message as NonNullable<typeof a.message>),
+      content: [...aContent, ...bContent],
+    },
+    ...mergedSidecarField(a, b),
+  }
+}
+
+function mergeUsers(a: ClaudeEntry, b: ClaudeEntry): ClaudeEntry {
+  const aContent = Array.isArray(a.message?.content) ? a.message.content : []
+  const bContent = Array.isArray(b.message?.content) ? b.message.content : []
+  // tool_results first, other content after — mirrors claude-code-src's
+  // hoistToolResults. Keeps any paired assistant tool_use visible to
+  // the API's tool_use_id → tool_result linkage check.
+  const combined = [...aContent, ...bContent]
+  const toolResults = combined.filter(
+    b => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_result',
+  )
+  const other = combined.filter(
+    b =>
+      !(typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_result'),
+  )
+  return {
+    ...a,
+    message: {
+      ...(a.message as NonNullable<typeof a.message>),
+      content: [...toolResults, ...other],
+    },
+    ...mergedSidecarField(a, b),
+  }
+}
+
+/**
+ * Produce the `_atp` field for a merged entry by concatenating source
+ * records from both contributors. Always returns `_atp.source` as an
+ * array when the merge involves non-empty sources. Callers spread this
+ * object onto the merged record.
+ */
+function mergedSidecarField(
+  a: ClaudeEntry,
+  b: ClaudeEntry,
+): { _atp?: { origin: 'codex' | 'claude' | 'synthesized'; source?: unknown } } {
+  const sa = readSidecar(a)
+  const sb = readSidecar(b)
+  if (!sa && !sb) return {}
+  // If EITHER had a synthesized origin or the origins differ we
+  // shouldn't have merged — canMerge guards above prevent that path,
+  // so this is defensive.
+  if (sa && sb && sa.origin !== sb.origin) return {}
+  const origin = (sa?.origin ?? sb?.origin) as 'codex' | 'claude' | 'synthesized'
+  if (origin === 'synthesized') return { _atp: { origin: 'synthesized' } }
+  const flatten = (s: { source?: unknown } | null): unknown[] => {
+    if (!s || !('source' in s) || s.source === undefined) return []
+    return Array.isArray(s.source) ? s.source : [s.source]
+  }
+  const sources = [...flatten(sa), ...flatten(sb)]
+  return { _atp: { origin, source: sources } }
 }
 
 function absorbClaudeSourceContext(ctx: Ctx, source: ClaudeEntry): void {

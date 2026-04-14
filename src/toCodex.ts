@@ -89,14 +89,23 @@ export function toCodex(
   for (const entry of entries) {
     const sidecar = readSidecar(entry)
     if (sidecar?.origin === 'codex') {
-      const source = sidecar.source
-      const sourceKey = JSON.stringify(source)
-      if (seenSourceKeys.has(sourceKey)) continue
-      seenSourceKeys.add(sourceKey)
-      out.push(source)
-      if (source.type === 'session_meta') sessionMetaEmitted = true
-      const sourceCwd = codexLineCwd(source)
-      if (sourceCwd) turnCwd = sourceCwd
+      // toClaude's coalesce post-pass can turn `source` into an array
+      // when it merges multiple Codex response_items into one Claude
+      // entry (e.g. N parallel function_calls collapsed into one
+      // assistant with N tool_use blocks). Iterate uniformly so both
+      // single and array shapes emit the original stream.
+      const sources: CodexRolloutLine[] = Array.isArray(sidecar.source)
+        ? (sidecar.source as CodexRolloutLine[])
+        : [sidecar.source as CodexRolloutLine]
+      for (const source of sources) {
+        const sourceKey = JSON.stringify(source)
+        if (seenSourceKeys.has(sourceKey)) continue
+        seenSourceKeys.add(sourceKey)
+        out.push(source)
+        if (source.type === 'session_meta') sessionMetaEmitted = true
+        const sourceCwd = codexLineCwd(source)
+        if (sourceCwd) turnCwd = sourceCwd
+      }
       continue
     }
 

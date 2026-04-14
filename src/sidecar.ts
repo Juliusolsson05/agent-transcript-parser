@@ -48,8 +48,21 @@ export function readSidecar<T extends WithAtp<object>>(
   const s = raw as AtpSidecar
   if (s.origin === 'synthesized') return s
   if (s.origin !== 'claude' && s.origin !== 'codex') return null
-  if (!('source' in s) || !s.source || typeof s.source !== 'object') return null
+  if (!('source' in s) || s.source === null || s.source === undefined) {
+    return null
+  }
+  // `source` may be an object (single) or an array (coalesced post-pass).
+  // Both are valid — downstream iterates uniformly via `sidecarSources()`.
+  if (typeof s.source !== 'object') return null
   return s
+}
+
+/**
+ * Normalize a sidecar's `source` field to an array. Callers that need
+ * to emit each original record don't have to branch on single-vs-array.
+ */
+export function sidecarSources<T>(source: T | T[]): T[] {
+  return Array.isArray(source) ? source : [source]
 }
 
 /**
