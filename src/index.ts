@@ -4,6 +4,12 @@ export { toClaude } from './toClaude.js'
 export { toCodex } from './toCodex.js'
 export type { ConvertOptions } from './toClaude.js'
 
+export { cloneClaudeTranscript } from './cloneClaude.js'
+export type { CloneClaudeOptions, CloneClaudeResult } from './cloneClaude.js'
+
+export { cloneCodexRollout } from './cloneCodex.js'
+export type { CloneCodexOptions, CloneCodexResult } from './cloneCodex.js'
+
 export { detectFormat } from './detectFormat.js'
 
 export {
