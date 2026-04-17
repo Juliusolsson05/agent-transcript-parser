@@ -1,0 +1,215 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cc-shell/codex-validator/rollout-envelope",
+  "title": "CodexRolloutLine",
+  "description": "On-disk rollout line shape. Hand-authored from codex-rs/protocol/src/protocol.rs::{RolloutLine, RolloutItem, SessionMetaLine, TurnContextItem, CompactedItem, EventMsg}. Upstream does NOT export this as JSON schema (it's internal persistence, not part of the app-server JSON-RPC API). Keep in lockstep with the Rust structs.",
+
+  "type": "object",
+  "required": ["timestamp", "type", "payload"],
+  "properties": {
+    "timestamp": {
+      "type": "string",
+      "description": "ISO-8601. Rust stores as `String` but every line in the wild is ISO."
+    },
+    "type": { "type": "string" },
+    "payload": {}
+  },
+
+  "oneOf": [
+    {
+      "description": "session_meta — RolloutItem::SessionMeta(SessionMetaLine)",
+      "properties": {
+        "type": { "const": "session_meta" },
+        "payload": { "$ref": "#/$defs/SessionMetaLine" }
+      },
+      "required": ["type", "payload"]
+    },
+    {
+      "description": "turn_context — RolloutItem::TurnContext(TurnContextItem)",
+      "properties": {
+        "type": { "const": "turn_context" },
+        "payload": { "$ref": "#/$defs/TurnContextItem" }
+      },
+      "required": ["type", "payload"]
+    },
+    {
+      "description": "response_item — RolloutItem::ResponseItem(ResponseItem). Upstream schema is the source of truth; we reference it via $ref so it stays pinned to the vendored file.",
+      "properties": {
+        "type": { "const": "response_item" },
+        "payload": { "$ref": "codex-v2.schemas.json#/definitions/ResponseItem" }
+      },
+      "required": ["type", "payload"]
+    },
+    {
+      "description": "event_msg — RolloutItem::EventMsg(EventMsg). EventMsg has ~40 variants tagged by payload.type; most are lifecycle signals with loose shape. We validate only the envelope + require payload.type, and let specific invariants live in invariants.ts.",
+      "properties": {
+        "type": { "const": "event_msg" },
+        "payload": { "$ref": "#/$defs/EventMsgPayload" }
+      },
+      "required": ["type", "payload"]
+    },
+    {
+      "description": "compacted — RolloutItem::Compacted(CompactedItem)",
+      "properties": {
+        "type": { "const": "compacted" },
+        "payload": { "$ref": "#/$defs/CompactedItem" }
+      },
+      "required": ["type", "payload"]
+    },
+    {
+      "description": "atp_passthrough — agent-transcript-parser synthetic line. NOT part of the native Codex protocol. Included here because the translator emits it for Claude entries with no native Codex equivalent; downstream Codex ignores unknown types. Validator treats it as a known-translator-only pass-through and accepts any payload shape so we don't flag our own lines.",
+      "properties": {
+        "type": { "const": "atp_passthrough" },
+        "payload": { "type": "object" }
+      },
+      "required": ["type", "payload"]
+    }
+  ],
+
+  "$defs": {
+    "SessionMetaLine": {
+      "description": "SessionMetaLine = SessionMeta flattened + optional git. Required fields match the Rust struct (non-Option, non-skip_serializing_if). model_provider is Option<String> so allow null.",
+      "type": "object",
+      "required": ["id", "timestamp", "cwd", "originator", "cli_version"],
+      "properties": {
+        "id": { "type": "string" },
+        "forked_from_id": { "type": ["string", "null"] },
+        "timestamp": { "type": "string" },
+        "cwd": { "type": "string" },
+        "originator": { "type": "string" },
+        "cli_version": { "type": "string" },
+        "source": { "type": ["string", "null"] },
+        "agent_nickname": { "type": ["string", "null"] },
+        "agent_role": { "type": ["string", "null"] },
+        "agent_type": { "type": ["string", "null"] },
+        "agent_path": { "type": ["string", "null"] },
+        "model_provider": { "type": ["string", "null"] },
+        "base_instructions": { "type": ["object", "null"] },
+        "dynamic_tools": { "type": ["array", "null"] },
+        "memory_mode": { "type": ["string", "null"] },
+        "git": {
+          "type": ["object", "null"],
+          "properties": {
+            "commit_hash": { "type": ["string", "null"] },
+            "branch": { "type": ["string", "null"] },
+            "repository_url": { "type": ["string", "null"] }
+          }
+        }
+      }
+    },
+    "TurnContextItem": {
+      "description": "Required fields mirror the non-Option fields on TurnContextItem: cwd, approval_policy, sandbox_policy, model, summary. Everything else is Option<...>.",
+      "type": "object",
+      "required": ["cwd", "approval_policy", "sandbox_policy", "model"],
+      "properties": {
+        "turn_id": { "type": ["string", "null"] },
+        "trace_id": { "type": ["string", "null"] },
+        "cwd": { "type": "string" },
+        "current_date": { "type": ["string", "null"] },
+        "timezone": { "type": ["string", "null"] },
+        "approval_policy": {},
+        "sandbox_policy": { "type": ["object", "string"] },
+        "network": { "type": ["object", "null"] },
+        "model": { "type": "string" },
+        "personality": {},
+        "collaboration_mode": { "type": ["object", "null"] },
+        "realtime_active": { "type": ["boolean", "null"] },
+        "effort": {},
+        "summary": {},
+        "user_instructions": { "type": ["string", "null"] },
+        "developer_instructions": { "type": ["string", "null"] },
+        "final_output_json_schema": {},
+        "truncation_policy": {}
+      }
+    },
+    "CompactedItem": {
+      "description": "CompactedItem { message, replacement_history? }. message is required, replacement_history is Option<Vec<ResponseItem>>.",
+      "type": "object",
+      "required": ["message"],
+      "properties": {
+        "message": { "type": "string" },
+        "replacement_history": {
+          "type": ["array", "null"],
+          "items": { "$ref": "codex-v2.schemas.json#/definitions/ResponseItem" }
+        }
+      }
+    },
+    "EventMsgPayload": {
+      "description": "EventMsg is Rust enum with ~40 variants, all tagged by internal `type` string and rename_all = snake_case. We enforce only the envelope (type is a string) and known-shape basics for the few variants that carry structured data we care about. Unknown/future variants pass through — we add to the known set as we encounter them.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string" }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "const": "user_message" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "type": { "const": "user_message" },
+              "message": { "type": ["string", "null"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "agent_message" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "type": { "const": "agent_message" },
+              "message": { "type": ["string", "null"] },
+              "phase": { "type": ["string", "null"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "agent_message_delta" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "type": { "const": "agent_message_delta" },
+              "delta": { "type": ["string", "null"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "task_started" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "type": { "const": "task_started" },
+              "turn_id": { "type": ["string", "null"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "task_complete" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "type": { "const": "task_complete" },
+              "turn_id": { "type": ["string", "null"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "exec_approval_request" } }, "required": ["type"] },
+          "then": {
+            "required": ["call_id", "command"],
+            "properties": {
+              "type": { "const": "exec_approval_request" },
+              "call_id": { "type": "string" },
+              "command": { "type": "array", "items": { "type": "string" } },
+              "workdir": { "type": ["string", "null"] }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "type": { "const": "thread_name_updated" } }, "required": ["type"] },
+          "then": {
+            "properties": {
+              "type": { "const": "thread_name_updated" },
+              "thread_name": { "type": ["string", "null"] }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

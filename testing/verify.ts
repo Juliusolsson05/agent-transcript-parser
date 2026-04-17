@@ -200,27 +200,64 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
   }
 
   const codex = toCodex([bashAssistant], { lossy: true })
+  // Plain Claude Bash (no codex.kind sidecar) must NOT become a
+  // `local_shell_call` — that's OpenAI's hosted tool with strict
+  // schema validation, and emitting one makes Codex's resume path
+  // fail with `Invalid type for 'input[N].action.env': ... got null`
+  // when replaying the transcript to /v1/responses. Generic
+  // function_call is the safe fallback.
   check(
-    'Bash tool use emits local_shell_call',
+    'Bash tool use emits plain function_call, not hosted local_shell_call',
     codex.some(
       line =>
         line.type === 'response_item' &&
-        (line.payload as { type?: string }).type === 'local_shell_call',
-    ),
+        (line.payload as { type?: string }).type === 'function_call' &&
+        (line.payload as { name?: string }).name === 'Bash',
+    ) &&
+      !codex.some(
+        line =>
+          line.type === 'response_item' &&
+          (line.payload as { type?: string }).type === 'local_shell_call',
+      ),
   )
 
-  const back = toClaude(codex, { lossy: true })
-  const bashBack = back.find(entry => entry.type === 'assistant')
-  const bashBlock = Array.isArray(bashBack?.message?.content)
-    ? bashBack?.message?.content[0]
-    : undefined
-
+  // Codex-origin local_shell_call blocks (tagged via `codex.kind`)
+  // still emit local_shell_call to preserve the original item type
+  // across lossy round-trips. And when they do, `action.env` MUST be
+  // a concrete object — never null/undefined — to satisfy OpenAI's
+  // hosted-tool schema on replay.
+  const localShellTagged: ClaudeEntry = {
+    ...bashAssistant,
+    uuid: 'asst-1b',
+    message: {
+      role: 'assistant',
+      content: [
+        {
+          type: 'tool_use',
+          id: 'shell-2',
+          name: 'Bash',
+          input: { command: 'ls', workdir: '/tmp/project' },
+          codex: { kind: 'local_shell_call', status: 'completed' },
+        },
+      ],
+    },
+  }
+  const codexTagged = toCodex([localShellTagged], { lossy: true })
+  const lscLine = codexTagged.find(
+    line =>
+      line.type === 'response_item' &&
+      (line.payload as { type?: string }).type === 'local_shell_call',
+  )
+  const lscAction = lscLine
+    ? ((lscLine.payload as { action?: { env?: unknown } }).action ?? {})
+    : {}
   check(
-    'local_shell_call round-trips back to Claude Bash tool use',
+    'tagged local_shell_call action.env is an object (not null)',
     Boolean(
-      bashBlock &&
-        bashBlock.type === 'tool_use' &&
-        (bashBlock as { name?: string }).name === 'Bash',
+      lscLine &&
+        lscAction &&
+        typeof (lscAction as { env?: unknown }).env === 'object' &&
+        (lscAction as { env?: unknown }).env !== null,
     ),
   )
 }
@@ -914,15 +951,23 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
     'translated assistant messages get explicit Claude message ids',
     assistantIds.every(id => typeof id === 'string' && id.startsWith('msg_')),
   )
-  // All assistant emissions inside ONE Codex logical turn (no
-  // intervening user text) must share a single `message.id` so Claude's
-  // normalizeMessagesForAPI merges them into one API assistant message
-  // with parallel tool_use blocks. Per-item unique ids break that merge
-  // and trigger ensureToolResultPairing to synthesize fake error
-  // tool_results, destroying the real tool outputs on resume.
+  // Pre-tool-result vs post-tool-result assistant batches MUST carry
+  // different `message.id`s. Claude's normalizeMessagesForAPI walks
+  // BACKWARD across tool_result-only user turns to merge same-id
+  // assistants into one API message. If both batches share an id, the
+  // merge collapses them, and the tool_results in between stop sitting
+  // "immediately after" their originating assistant — the server then
+  // rejects the request with "tool_use ids were found without
+  // tool_result blocks immediately after". Giving each assistant batch
+  // a fresh id after every function_call_output keeps each
+  // tool_use/tool_result pair adjacent on resume.
+  //
+  // Parallel tool calls WITHIN one pre-output batch still share an id —
+  // that case is covered separately by the "parallel function_calls
+  // coalesce" check above.
   check(
-    'assistant emissions within one logical turn share a single message.id',
-    new Set(assistantIds).size === 1,
+    'assistant emissions across a tool_result boundary get different message.ids',
+    assistantIds.length >= 2 && assistantIds[0] !== assistantIds[1],
   )
 }
 
@@ -1429,6 +1474,157 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
       stampedTail?.cwd === '/tmp/mixed' &&
       stampedTail?.gitBranch === 'feature/mixed' &&
       stampedTail?.version === '1.2.3',
+  )
+}
+
+// ---------------------------------------------------------------------------
+// dropClaudeBootstrap — provider-switch cleanup invariant
+// ---------------------------------------------------------------------------
+//
+// When the cc-shell workspace switches a session from Claude back to
+// Codex, the Claude JSONL carries a fat `<system-reminder>` block
+// (tool list, MCP instructions, skill listing, Todoist notes, etc.)
+// plus a family of housekeeping attachments. Those are Claude-local
+// context, not conversation; leaking them into the Codex rollout makes
+// the resumed Codex agent read a giant injected commentary block as if
+// the user had pasted it.
+//
+// The `dropClaudeBootstrap` option silences that burst on the way out.
+// These checks lock in the behavior from both directions: when OFF we
+// preserve everything (round-trip promise), when ON we drop only the
+// housekeeping shapes and leave genuine user/assistant/tool turns alone.
+
+{
+  const bootstrapReminderText =
+    '<system-reminder>\nThe following deferred tools are now available via ToolSearch...\n</system-reminder>'
+
+  const mixedTranscript: ClaudeEntry[] = [
+    {
+      type: 'user',
+      uuid: 'u-real-prompt',
+      parentUuid: null,
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:00.000Z',
+      cwd: '/tmp/project',
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: 'please build the feature' }],
+      },
+    },
+    {
+      type: 'user',
+      uuid: 'u-bootstrap-reminder',
+      parentUuid: 'u-real-prompt',
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:01.000Z',
+      isMeta: true,
+      message: {
+        role: 'user',
+        content: [{ type: 'text', text: bootstrapReminderText }],
+      },
+    },
+    {
+      type: 'attachment',
+      uuid: 'a-deferred-tools',
+      parentUuid: 'u-bootstrap-reminder',
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:02.000Z',
+      attachment: {
+        type: 'deferred_tools_delta',
+        addedNames: ['TaskCreate', 'WebFetch'],
+      },
+    },
+    {
+      type: 'attachment',
+      uuid: 'a-skill-listing',
+      parentUuid: 'a-deferred-tools',
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:03.000Z',
+      attachment: {
+        type: 'skill_listing',
+        content: '- brainstorm: think things through',
+      },
+    },
+    {
+      type: 'attachment',
+      uuid: 'a-todo-reminder',
+      parentUuid: 'a-skill-listing',
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:04.000Z',
+      attachment: { type: 'todo_reminder', itemCount: 0, content: [] },
+    },
+    {
+      type: 'attachment',
+      uuid: 'a-queued',
+      parentUuid: 'a-todo-reminder',
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:05.000Z',
+      attachment: {
+        type: 'queued_command',
+        prompt: 'queued real work please do it',
+      },
+    },
+    {
+      type: 'assistant',
+      uuid: 'asst-reply',
+      parentUuid: 'a-queued',
+      sessionId: 'sess-bootstrap',
+      timestamp: '2026-04-14T09:00:06.000Z',
+      message: {
+        role: 'assistant',
+        id: 'msg_real',
+        content: [{ type: 'text', text: 'real assistant reply' }],
+      },
+    },
+  ] as ClaudeEntry[]
+
+  // dropClaudeBootstrap ON: bootstrap burst stripped
+  const cleaned = toCodex(mixedTranscript, {
+    lossy: true,
+    dropClaudeBootstrap: true,
+  })
+
+  const cleanedText = JSON.stringify(cleaned)
+  check(
+    'dropClaudeBootstrap strips the fat system-reminder user turn',
+    !cleanedText.includes('system-reminder') &&
+      !cleanedText.includes('following deferred tools are now available'),
+  )
+  check(
+    'dropClaudeBootstrap strips deferred_tools_delta attachment',
+    !cleanedText.includes('TaskCreate') && !cleanedText.includes('WebFetch'),
+  )
+  check(
+    'dropClaudeBootstrap strips skill_listing attachment',
+    !cleanedText.includes('brainstorm'),
+  )
+  check(
+    'dropClaudeBootstrap strips todo_reminder attachment',
+    !cleanedText.includes('todo_reminder'),
+  )
+  check(
+    'dropClaudeBootstrap preserves genuine user prompts',
+    cleanedText.includes('please build the feature'),
+  )
+  check(
+    'dropClaudeBootstrap preserves queued_command user content',
+    cleanedText.includes('queued real work please do it'),
+  )
+  check(
+    'dropClaudeBootstrap preserves genuine assistant output',
+    cleanedText.includes('real assistant reply'),
+  )
+
+  // dropClaudeBootstrap OFF (default): nothing silently disappears
+  const untouched = toCodex(mixedTranscript, { lossy: true })
+  const untouchedText = JSON.stringify(untouched)
+  check(
+    'default toCodex (dropClaudeBootstrap off) keeps the reminder turn',
+    untouchedText.includes('following deferred tools are now available'),
+  )
+  check(
+    'default toCodex (dropClaudeBootstrap off) keeps skill_listing summary',
+    untouchedText.includes('brainstorm'),
   )
 }
 

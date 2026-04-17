@@ -7,9 +7,10 @@
 // context (sessionId, cwd, gitBranch, parentUuid, index) so every
 // entry is stamped with stable, threading-consistent metadata.
 
-import { attachSidecar, readSidecar } from './sidecar.js'
+import { attachSidecar, readSidecar, sidecarSources } from './sidecar.js'
 import { normalizeOutput, parseToolInput, stableUuid } from './util.js'
 import type {
+  AtpSidecar,
   ClaudeContentBlock,
   ClaudeEntry,
   ClaudeMessage,
@@ -43,6 +44,25 @@ export type ConvertOptions = {
    *  toCodex re-exports ConvertOptions from this file. Ignored by
    *  toClaude. */
   targetSessionId?: string
+  /**
+   * Only consulted by `toCodex`. When true, drop Claude's self-injected
+   * bootstrap / housekeeping entries before writing the Codex rollout —
+   * specifically the fat `<system-reminder>` turn (tool inventory, MCP
+   * instructions, skill listing, Todoist notes, etc.) and the matching
+   * attachment families (`deferred_tools_delta`, `skill_listing`,
+   * `todo_reminder`, `task_reminder`, `agent_listing_delta`,
+   * `mcp_instructions_delta`, `agent_mention`, `output_style`,
+   * `ultrathink_effort`).
+   *
+   * The default is OFF because round-trip fidelity tests expect
+   * byte-identical output when the same transcript passes through both
+   * converters. Provider-switch in cc-shell turns it ON because those
+   * entries are Claude-local housekeeping that must not leak into a
+   * Codex rollout the user just pivoted to.
+   *
+   * Ignored by `toClaude`.
+   */
+  dropClaudeBootstrap?: boolean
 }
 
 type Ctx = {
@@ -86,6 +106,7 @@ type Ctx = {
    * around it.
    */
   turnMessageId: string | null
+  turnMessageSeq: number
   callInfo: Map<
     string,
     {
@@ -107,8 +128,14 @@ function newCtx(lossy: boolean): Ctx {
     index: 0,
     lossy,
     turnMessageId: null,
+    turnMessageSeq: 0,
     callInfo: new Map(),
   }
+}
+
+function resetTurnMessageId(ctx: Ctx): void {
+  ctx.turnMessageId = null
+  ctx.turnMessageSeq++
 }
 
 /**
@@ -130,8 +157,8 @@ function currentTurnMessageId(ctx: Ctx, line: CodexRolloutLine): string {
   if (ctx.turnMessageId === null) {
     ctx.turnMessageId = syntheticClaudeMessageId([
       ctx.sessionId,
+      ctx.turnMessageSeq,
       line.timestamp,
-      ctx.index,
       'turn',
     ])
   }
@@ -325,18 +352,19 @@ export function toClaude(
     // Short-circuit: this Codex line already carries the original
     // Claude entry it came from. Emit that directly — byte-identical.
     if (sidecar?.origin === 'claude') {
-      const source = sidecar.source
-      if (source.uuid && seenSourceUuids.has(source.uuid)) {
-        // Fan-out: same source already emitted by a previous line.
-        // Skip silently — the already-emitted entry represents all
-        // of these Codex lines collectively.
-        continue
+      for (const source of sidecarSources(sidecar.source)) {
+        if (source.uuid && seenSourceUuids.has(source.uuid)) {
+          // Fan-out: same source already emitted by a previous line.
+          // Skip silently — the already-emitted entry represents all
+          // of these Codex lines collectively.
+          continue
+        }
+        if (source.uuid) seenSourceUuids.add(source.uuid)
+        out.push(source)
+        absorbClaudeSourceContext(ctx, source)
+        ctx.parentUuid = source.uuid ?? ctx.parentUuid
+        ctx.index++
       }
-      if (source.uuid) seenSourceUuids.add(source.uuid)
-      out.push(source)
-      absorbClaudeSourceContext(ctx, source)
-      ctx.parentUuid = source.uuid ?? ctx.parentUuid
-      ctx.index++
       continue
     }
 
@@ -411,7 +439,22 @@ function coalesceForClaudeApiShape(entries: ClaudeEntry[]): ClaudeEntry[] {
     }
     out.push(entry)
   }
-  return out
+  return rethreadParentChain(out)
+}
+
+function rethreadParentChain(entries: ClaudeEntry[]): ClaudeEntry[] {
+  let parentUuid: string | null = null
+  return entries.map(entry => {
+    if (typeof entry.uuid !== 'string' || entry.uuid.length === 0) {
+      return entry
+    }
+    const next = {
+      ...entry,
+      parentUuid,
+    }
+    parentUuid = entry.uuid
+    return next
+  })
 }
 
 function canMergeAssistants(a: ClaudeEntry, b: ClaudeEntry): boolean {
@@ -495,7 +538,7 @@ function mergeUsers(a: ClaudeEntry, b: ClaudeEntry): ClaudeEntry {
 function mergedSidecarField(
   a: ClaudeEntry,
   b: ClaudeEntry,
-): { _atp?: { origin: 'codex' | 'claude' | 'synthesized'; source?: unknown } } {
+): { _atp?: AtpSidecar } {
   const sa = readSidecar(a)
   const sb = readSidecar(b)
   if (!sa && !sb) return {}
@@ -503,14 +546,17 @@ function mergedSidecarField(
   // shouldn't have merged — canMerge guards above prevent that path,
   // so this is defensive.
   if (sa && sb && sa.origin !== sb.origin) return {}
-  const origin = (sa?.origin ?? sb?.origin) as 'codex' | 'claude' | 'synthesized'
+  const origin = (sa?.origin ?? sb?.origin) as AtpSidecar['origin']
   if (origin === 'synthesized') return { _atp: { origin: 'synthesized' } }
-  const flatten = (s: { source?: unknown } | null): unknown[] => {
-    if (!s || !('source' in s) || s.source === undefined) return []
-    return Array.isArray(s.source) ? s.source : [s.source]
+  const flatten = (s: AtpSidecar | null): Array<ClaudeEntry | CodexRolloutLine> => {
+    if (!s || s.origin === 'synthesized') return []
+    return sidecarSources(s.source)
   }
   const sources = [...flatten(sa), ...flatten(sb)]
-  return { _atp: { origin, source: sources } }
+  if (origin === 'claude') {
+    return { _atp: { origin, source: sources as ClaudeEntry[] } }
+  }
+  return { _atp: { origin, source: sources as CodexRolloutLine[] } }
 }
 
 function absorbClaudeSourceContext(ctx: Ctx, source: ClaudeEntry): void {
@@ -542,7 +588,11 @@ function absorbClaudeSourceContext(ctx: Ctx, source: ClaudeEntry): void {
     source.type === 'assistant'
       ? (source.message as { id?: string } | undefined)?.id
       : undefined
-  ctx.turnMessageId = typeof sourceMid === 'string' ? sourceMid : null
+  if (typeof sourceMid === 'string') {
+    ctx.turnMessageId = sourceMid
+  } else {
+    resetTurnMessageId(ctx)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -611,7 +661,7 @@ function mapSessionMeta(ctx: Ctx, payload: CodexSessionMetaPayload): void {
   if (payload.git?.branch) ctx.gitBranch = payload.git.branch
   if (payload.cli_version) ctx.version = payload.cli_version
   // New session: drop any turn id from whatever came before.
-  ctx.turnMessageId = null
+  resetTurnMessageId(ctx)
 }
 
 function mapTurnContext(ctx: Ctx, payload: CodexTurnContextPayload): void {
@@ -619,7 +669,7 @@ function mapTurnContext(ctx: Ctx, payload: CodexTurnContextPayload): void {
   // turn_context is Codex's explicit "new turn starting" signal.
   // Force a fresh assistant id so the coming turn never merges with
   // whatever tool_use emissions accumulated in the previous one.
-  ctx.turnMessageId = null
+  resetTurnMessageId(ctx)
 }
 
 // ---------------------------------------------------------------------------
@@ -702,7 +752,7 @@ function mapMessage(
   // developer/assistant messages right after a user prompt) picks up
   // the new id via currentTurnMessageId below.
   if (role === 'user') {
-    ctx.turnMessageId = null
+    resetTurnMessageId(ctx)
   }
 
   const message: ClaudeMessage = {
@@ -790,6 +840,11 @@ function mapFunctionCallOutput(
   line: CodexRolloutLine,
   payload: CodexFunctionCallOutputPayload,
 ): ClaudeEntry {
+  // A tool_result ends one Claude assistant response. The next translated
+  // assistant emission must allocate a fresh message.id so Claude does not
+  // merge post-tool-result assistant chunks back into the pre-tool_result
+  // assistant during resume normalization.
+  resetTurnMessageId(ctx)
   const { text, metadata, richContent } = normalizeOutput(payload.output)
   const isError =
     metadata && typeof metadata.exit_code === 'number' && metadata.exit_code !== 0
@@ -890,6 +945,10 @@ function mapCustomToolCallOutput(
   line: CodexRolloutLine,
   payload: CodexCustomToolCallOutputPayload,
 ): ClaudeEntry[] {
+  // Output from a custom tool is still a user-side turn boundary from
+  // Claude's perspective; follow-on assistant text/tool calls must use a
+  // fresh message.id.
+  resetTurnMessageId(ctx)
   const { text, metadata, richContent } = normalizeOutput(payload.output)
   const isError =
     metadata && typeof metadata.exit_code === 'number' && metadata.exit_code !== 0
@@ -1159,6 +1218,10 @@ function mapToolSearchOutput(
   line: CodexRolloutLine,
   payload: CodexToolSearchOutputPayload,
 ): ClaudeEntry[] {
+  // Tool discovery output becomes a user-visible result turn in Claude.
+  // Reset the current assistant message id so any later assistant summary
+  // starts a fresh Claude response instead of merging backward.
+  resetTurnMessageId(ctx)
   const tools = Array.isArray(payload.tools) ? payload.tools : []
   const names = tools
     .filter(isRecord)
@@ -1309,7 +1372,7 @@ function mapCompacted(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry {
   // messages on either side belong to different logical turns and must
   // not merge. Dropping the current turn id forces the next assistant
   // emission to allocate a fresh one.
-  ctx.turnMessageId = null
+  resetTurnMessageId(ctx)
   return stamp(ctx, {
     uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'compacted']),
     timestamp: line.timestamp,

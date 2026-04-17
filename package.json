@@ -13,6 +13,8 @@
     "verify": "tsx testing/verify.ts"
   },
   "devDependencies": {
+    "ajv": "^8.18.0",
+    "ajv-formats": "^3.0.1",
     "node-pty": "^1.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"

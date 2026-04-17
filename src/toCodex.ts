@@ -33,6 +33,14 @@ export function toCodex(
   opts: ConvertOptions = {},
 ): CodexRolloutLine[] {
   const lossy = opts.lossy === true
+  // Provider-switch in cc-shell (Claude → Codex) turns this on so the
+  // translated rollout does not inherit Claude's self-injected bootstrap
+  // burst (tool list, MCP instructions, skill listing, todo reminders).
+  // Those entries are Claude-local housekeeping; Codex has its own
+  // equivalents and leaking them poisons the target conversation with
+  // a giant commentary block on resume. Default stays off so existing
+  // round-trip fidelity tests keep passing byte-for-byte.
+  const dropClaudeBootstrap = opts.dropClaudeBootstrap === true
   // Reusing the source Claude session id as the target Codex thread id
   // looks convenient, but it causes real collisions during resume
   // testing: multiple imported rollout files with the same id can
@@ -87,6 +95,17 @@ export function toCodex(
   let turnCwd = ''
 
   for (const entry of entries) {
+    // Bootstrap-filter MUST run before the sidecar short-circuit. A Claude
+    // user entry with isMeta: true that was *originally* sourced from a
+    // Codex line would have origin: 'codex' — we don't want to drop that,
+    // because the user's real Codex content shouldn't disappear. Conversely,
+    // a Claude-injected reminder has either no sidecar or origin: 'claude',
+    // and that's exactly what we want to strip. The predicate checks both
+    // the entry shape AND the sidecar origin so we only drop things that
+    // were invented by Claude on the way in.
+    if (dropClaudeBootstrap && isClaudeBootstrapEntry(entry)) {
+      continue
+    }
     const sidecar = readSidecar(entry)
     if (sidecar?.origin === 'codex') {
       // toClaude's coalesce post-pass can turn `source` into an array
@@ -302,6 +321,85 @@ function mapEntry(entry: ClaudeEntry): CodexRolloutLine[] {
       payload: { source_type: entry.type },
     },
   ]
+}
+
+/**
+ * True for Claude entries that are self-injected housekeeping — the
+ * "fat system-reminder" the user sees on every session boot / toolset
+ * change. These are NOT user prompts and NOT assistant output; they are
+ * Claude's own bootstrap context. Leaving them in a Codex rollout on
+ * provider switch creates a giant commentary turn that the resumed
+ * Codex agent then reads as if the user pasted it.
+ *
+ * The filter intentionally stays narrow:
+ *
+ *   - `type: 'user'` + `isMeta: true` with ONLY text content: this is how
+ *     Claude stores the system-reminder block (tool list, MCP
+ *     instructions, skill bootstrap, Todoist notes, etc.). Any
+ *     `tool_result` inside the content disqualifies it — tool results
+ *     can be authored by Claude but carry real work state we must keep.
+ *
+ *   - `type: 'attachment'` with an attachment.type from the
+ *     housekeeping families (deferred tools, skill listing, todo/task
+ *     reminders, capability/MCP deltas, output-style/ultrathink mode
+ *     toggles, agent mentions). Attachments that could carry real
+ *     content the user cares about (`mcp_resource`, `invoked_skills`,
+ *     `plan_file_reference`, `edited_text_file`, `diagnostics`,
+ *     `queued_command`, `critical_system_reminder`, etc.) are left
+ *     alone.
+ *
+ *   - Any entry whose sidecar origin is `codex` is left alone even if
+ *     it looks bootstrap-shaped — that's a user's real Codex content
+ *     that happened to round-trip through Claude.
+ *
+ * Conservatism matters: false positives silently delete user content.
+ * The safer default is to leave anything ambiguous as a visible
+ * commentary block; callers who opt in already accept a little leftover
+ * Claude chatter over any chance of dropping real conversation.
+ */
+function isClaudeBootstrapEntry(entry: ClaudeEntry): boolean {
+  const sidecar = readSidecar(entry)
+  if (sidecar?.origin === 'codex') return false
+
+  if (entry.type === 'user' && entry.isMeta === true && entry.message) {
+    const content = entry.message.content
+    if (typeof content === 'string') {
+      // Meta user entries in stringified form still only carry reminder
+      // text in the wild; drop them too. If we later find a meta user
+      // message whose string content is meaningful we'll revisit.
+      return true
+    }
+    if (Array.isArray(content)) {
+      // If anything in the content array is NOT a plain text block,
+      // keep the entry. tool_result blocks are the canonical "this is
+      // real work state" case, but we also guard against future block
+      // types by requiring every block to be text.
+      return content.every(
+        block => isRecord(block) && block.type === 'text',
+      )
+    }
+  }
+
+  if (entry.type === 'attachment') {
+    const attachment = entry.attachment
+    if (!attachment || typeof attachment.type !== 'string') return false
+    switch (attachment.type) {
+      case 'deferred_tools_delta':
+      case 'skill_listing':
+      case 'todo_reminder':
+      case 'task_reminder':
+      case 'agent_listing_delta':
+      case 'mcp_instructions_delta':
+      case 'agent_mention':
+      case 'output_style':
+      case 'ultrathink_effort':
+        return true
+      default:
+        return false
+    }
+  }
+
+  return false
 }
 
 function entryStartsNewTurn(entry: ClaudeEntry): boolean {
@@ -1003,21 +1101,38 @@ function toLocalShellPayload(
     type: 'exec'
     command: string[]
     working_directory?: string
+    env: Record<string, string>
   }
 } | null {
+  // Only upgrade to Codex's `local_shell_call` when the block was
+  // explicitly tagged as a Codex local_shell_call via round-trip
+  // metadata. Previously we also upgraded ANY `block.name === 'Bash'`,
+  // which was wrong in two compounding ways:
+  //
+  //   1. Claude's Bash is a regular function-style tool, not OpenAI's
+  //      hosted `local_shell` tool. Emitting it as `local_shell_call`
+  //      lies about the item type.
+  //
+  //   2. `local_shell_call` is a HOSTED OpenAI tool with strict schema
+  //      validation on resume. When Codex replays a translated
+  //      transcript to /v1/responses, the OpenAI API validates
+  //      `action.env` and rejects the whole request with
+  //      `Invalid type for 'input[N].action.env': expected an object
+  //      with string keys and string values, but got null instead.`
+  //      because Codex's on-disk Option<HashMap> round-trips to `null`.
+  //
+  // Native Codex itself doesn't actually use `local_shell_call` for
+  // its shell — it uses `function_call name='exec_command'` (see any
+  // fresh ~/.codex/sessions/.../rollout-*.jsonl). So plain Claude Bash
+  // should fall through to the generic function_call emission path,
+  // which produces a transcript-safe item OpenAI won't strict-validate.
   const kind = block.codex?.kind as string | undefined
-  if (kind !== 'local_shell_call' && block.name !== 'Bash') return null
+  if (kind !== 'local_shell_call') return null
   if (typeof block.input !== 'object' || block.input === null) return null
 
   const command = extractBashCommand(block.input)
   if (!command) return null
 
-  // We only upgrade Bash -> local_shell_call when we can recover a
-  // concrete command string. Otherwise we leave the block as a generic
-  // function_call, because emitting a half-empty local_shell_call is
-  // worse than not upgrading at all: Codex normalizers assume these
-  // items are executable shell actions and may synthesize missing
-  // outputs around them.
   const input = block.input as Record<string, unknown>
   const workingDirectory =
     typeof input.workdir === 'string'
@@ -1034,6 +1149,16 @@ function toLocalShellPayload(
       type: 'exec',
       command: [command],
       ...(workingDirectory ? { working_directory: workingDirectory } : {}),
+      // env MUST be a concrete object, never null/undefined. OpenAI's
+      // hosted local_shell_call schema rejects `env: null` with
+      // invalid_type. Codex's Rust struct has `env: Option<HashMap>`
+      // without skip_serializing_if, so a missing env on disk
+      // deserializes back to None and re-serializes as explicit
+      // `null` when Codex posts history to /v1/responses. The empty
+      // object is schema-valid and semantically equivalent to "no
+      // extra env" as far as replay goes (the tool already ran; this
+      // is historical context, not a fresh exec request).
+      env: {},
     },
   }
 }
@@ -1080,7 +1205,10 @@ function mapSystemEntry(entry: ClaudeEntry): CodexRolloutLine[] {
       {
         timestamp: entry.timestamp,
         type: 'compacted',
-        payload: (entry.compactMetadata ?? {}) as Record<string, unknown>,
+        payload: {
+          message: typeof entry.content === 'string' ? entry.content : '',
+          ...((entry.compactMetadata ?? {}) as Record<string, unknown>),
+        },
       },
     ]
   }
