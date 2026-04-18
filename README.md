@@ -49,6 +49,22 @@ type ConvertOptions = {
 
 Plus typed exports for every Claude / Codex shape variant and the sidecar utilities (`ATP_KEY`, `attachSidecar`, `readSidecar`, `stripSidecar`).
 
+## Ghost records
+
+atp supports a fourth sidecar origin — `ghost` — for provisional transcript entries that will be reconciled against authoritative ones. Useful when multiple producers share a transcript: live UIs bridging a batched-writer gap, speculative or optimistic writes, offline editors, streaming ingestion pipelines, and multi-producer sessions where one tool writes authoritative records and another writes provisional ones.
+
+```ts
+import {
+  createGhost,
+  updateGhost,
+  supersedeGhost,
+  reduceGhostLog,
+  mergeWithUpstream,
+} from 'agent-transcript-parser'
+```
+
+Both converters skip ghost records on export, so ghosts never leak into a durable cross-provider rollout. See [`docs/ghost.md`](./docs/ghost.md) for the design rationale, lifecycle, reconciliation semantics, and an end-to-end example.
+
 ## Quick example
 
 ```ts

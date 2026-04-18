@@ -15,10 +15,24 @@ export { detectFormat } from './detectFormat.js'
 export {
   ATP_KEY,
   attachSidecar,
+  ghostSidecar,
+  isGhost,
   readSidecar,
   stripSidecar,
 } from './sidecar.js'
-export type { AtpSidecar } from './sidecar.js'
+export type { AtpGhostSidecar, AtpSidecar, GhostEntry } from './sidecar.js'
+
+export {
+  createGhost,
+  ghostUuid,
+  isGhostUuid,
+  mergeWithUpstream,
+  orphanGhost,
+  reduceGhostLog,
+  supersedeGhost,
+  updateGhost,
+} from './ghost.js'
+export type { CreateGhostParams, MergeOptions } from './ghost.js'
 
 export type {
   ClaudeEntry,

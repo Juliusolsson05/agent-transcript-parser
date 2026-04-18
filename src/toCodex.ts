@@ -94,7 +94,8 @@ export function toCodex(
   // to populate turn_context.cwd when the emitting entry lacks it.
   let turnCwd = ''
 
-  for (const entry of entries) {
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!
     // Bootstrap-filter MUST run before the sidecar short-circuit. A Claude
     // user entry with isMeta: true that was *originally* sourced from a
     // Codex line would have origin: 'codex' — we don't want to drop that,
@@ -107,6 +108,15 @@ export function toCodex(
       continue
     }
     const sidecar = readSidecar(entry)
+    // Ghost entry — a provisional record emitted by a live layer
+    // (see `./ghost.ts` and `docs/ghost.md`). Ghosts are a runtime
+    // artifact; they must NOT land in a durable Codex rollout.
+    // Skip silently before any further processing (no session_meta
+    // synthesis, no turn wrapping, no cwd tracking) so the export
+    // looks the same as if the ghost had never been present.
+    if (sidecar?.origin === 'ghost') {
+      continue
+    }
     if (sidecar?.origin === 'codex') {
       // toClaude's coalesce post-pass can turn `source` into an array
       // when it merges multiple Codex response_items into one Claude
@@ -141,6 +151,99 @@ export function toCodex(
       }
     }
     if (entry.cwd) turnCwd = entry.cwd
+
+    // Claude encodes what Codex calls a `CompactedItem` as TWO entries:
+    // a `system {subtype: compact_boundary}` fence followed immediately
+    // by the `user {isCompactSummary: true}` carrying the summary text
+    // (see buildPostCompactMessages in claude-code-src/full/services/
+    // compact/compact.ts). Codex's reconstruction, in contrast, stores
+    // it as ONE native rollout line whose `replacement_history` replaces
+    // everything before it on resume (see rollout_reconstruction.rs:250
+    // — `history.replace(replacement_history.clone())`).
+    //
+    // To make Codex genuinely recognize a Claude-origin session as
+    // compacted (and therefore truncate the pre-compact history on
+    // resume instead of consuming it whole), we coalesce the two
+    // Claude entries here into a single `compacted` Codex line.
+    //
+    // Sidecar carries BOTH source entries so the reverse trip
+    // (toClaude) re-emits them verbatim via the short-circuit path,
+    // preserving Claude→Codex→Claude byte-equality.
+    if (
+      entry.type === 'system' &&
+      entry.subtype === 'compact_boundary'
+    ) {
+      const summaryEntry = entries[i + 1]
+      if (summaryEntry && isClaudeCompactSummaryEntry(summaryEntry)) {
+        // Compaction is a history fence — close any open turn before the
+        // fence so Codex's turn reconstruction doesn't merge the pre- and
+        // post-compact sides into one logical turn.
+        closeTurn(entry.timestamp)
+        // Codex-origin boundaries carry the original payload verbatim in
+        // `compactMetadata` (see mapCompacted in toClaude). When present,
+        // prefer it so lossy Codex→Claude→Codex preserves fields like
+        // `replacement_history` exactly rather than degenerating to our
+        // minimal summary-only shape.
+        const preserved = extractCodexCompactedPayload(entry)
+        let payload: Record<string, unknown>
+        if (preserved) {
+          payload = preserved
+        } else {
+          const rawSummary = extractClaudeSummaryText(summaryEntry)
+          // Prepend Codex's SUMMARY_PREFIX so Codex's `is_summary_message`
+          // check (core/src/compact.rs:271) recognizes the injected item
+          // as a summary rather than a normal user message. Without the
+          // prefix the legacy-path reconstruction that falls back to
+          // `build_compacted_history` would double-count the summary
+          // among the kept user messages.
+          const summaryForCodex = rawSummary.startsWith(`${CODEX_SUMMARY_PREFIX}\n`)
+            ? rawSummary
+            : `${CODEX_SUMMARY_PREFIX}\n${rawSummary}`
+          payload = {
+            message: summaryForCodex,
+            // Minimal replacement_history: a single user InputText item
+            // carrying the summary. This matches what Codex itself
+            // writes in the "summary only" case — see
+            // core/src/compact.rs:383 where the last push is a
+            // role:"user" InputText with the summary text. Preserved
+            // pre-compact messages (if Claude recorded a
+            // `preservedSegment`) are carried across as ordinary
+            // post-boundary entries in the source stream, so they end
+            // up AFTER this `compacted` line in the Codex output —
+            // which is exactly where Codex's reconstruction appends
+            // post-compact items anyway.
+            replacement_history: [
+              {
+                type: 'message',
+                role: 'user',
+                content: [{ type: 'input_text', text: summaryForCodex }],
+              },
+            ],
+          }
+        }
+        const compactedLine: CodexRolloutLine = {
+          timestamp: entry.timestamp,
+          type: 'compacted',
+          payload,
+        }
+        const decorated: CodexRolloutLine = lossy
+          ? compactedLine
+          : ({
+              ...compactedLine,
+              _atp: {
+                origin: 'claude',
+                source: [entry, summaryEntry],
+              },
+            } as CodexRolloutLine)
+        out.push(decorated)
+        // Skip the summary entry — it was consumed into the compacted line.
+        i++
+        continue
+      }
+      // Boundary without an adjacent summary: fall through to the
+      // existing `mapSystemEntry` path, which drops it. A pure
+      // boundary alone carries no information Codex can act on.
+    }
 
     // Start a new turn on every user entry that carries text
     // content. Tool-result-only user entries don't qualify — they're
@@ -400,6 +503,83 @@ function isClaudeBootstrapEntry(entry: ClaudeEntry): boolean {
   }
 
   return false
+}
+
+// ---------------------------------------------------------------------------
+// Compaction helpers (Claude → Codex)
+// ---------------------------------------------------------------------------
+
+/**
+ * Codex's on-disk summary prefix. Kept in sync with
+ * codex-src/codex-rs/core/templates/compact/summary_prefix.md. Codex
+ * prepends this verbatim to the summary text before writing it to the
+ * rollout's `CompactedItem.message`. Its `is_summary_message` check
+ * (core/src/compact.rs:271) tests for exactly this string + "\n" as a
+ * prefix when distinguishing summary user-messages from real ones in
+ * the legacy reconstruction path. We mirror the constant locally so
+ * we don't take a runtime dep on the Codex source tree.
+ */
+const CODEX_SUMMARY_PREFIX =
+  'Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:'
+
+/**
+ * Claude wraps the raw summary text inside `getCompactUserSummaryMessage`
+ * (claude-code-src/full/services/compact/prompt.ts:337) before writing
+ * the `isCompactSummary: true` user entry. This preamble is the exact
+ * first-line prefix that function emits. When translating Claude →
+ * Codex we strip it so Codex sees just the informational summary
+ * body; the Codex `SUMMARY_PREFIX` is prepended on top before
+ * emission so Codex's native detection still fires.
+ */
+const CLAUDE_COMPACT_WRAPPER_PREFIX =
+  'This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.\n\n'
+
+/**
+ * Trailing lines that `getCompactUserSummaryMessage` appends after the
+ * summary body (transcript pointer, suppress-questions continuation
+ * instructions, proactive-mode note). We strip whichever of these
+ * appear so the extracted summary body doesn't carry Claude-specific
+ * runtime instructions into the Codex rollout.
+ */
+const CLAUDE_COMPACT_WRAPPER_SUFFIX_MARKERS = [
+  '\n\nIf you need specific details from before compaction',
+  '\n\nRecent messages are preserved verbatim.',
+  '\nContinue the conversation from where it left off',
+]
+
+function isClaudeCompactSummaryEntry(entry: ClaudeEntry): boolean {
+  if (entry.type !== 'user') return false
+  if (entry.isCompactSummary !== true) return false
+  return true
+}
+
+function extractClaudeSummaryText(entry: ClaudeEntry): string {
+  const content = entry.message?.content
+  let raw = ''
+  if (typeof content === 'string') {
+    raw = content
+  } else if (Array.isArray(content)) {
+    const parts: string[] = []
+    for (const block of content) {
+      if (
+        block &&
+        typeof block === 'object' &&
+        (block as { type?: string }).type === 'text' &&
+        typeof (block as { text?: string }).text === 'string'
+      ) {
+        parts.push((block as { text: string }).text)
+      }
+    }
+    raw = parts.join('\n\n')
+  }
+  let body = raw.startsWith(CLAUDE_COMPACT_WRAPPER_PREFIX)
+    ? raw.slice(CLAUDE_COMPACT_WRAPPER_PREFIX.length)
+    : raw
+  for (const marker of CLAUDE_COMPACT_WRAPPER_SUFFIX_MARKERS) {
+    const idx = body.indexOf(marker)
+    if (idx >= 0) body = body.slice(0, idx)
+  }
+  return body.trim()
 }
 
 function entryStartsNewTurn(entry: ClaudeEntry): boolean {
@@ -1199,16 +1379,32 @@ function emitReasoning(
 // system entries
 // ---------------------------------------------------------------------------
 
+function extractCodexCompactedPayload(
+  entry: ClaudeEntry,
+): Record<string, unknown> | null {
+  const metadata = entry.compactMetadata
+  if (!isRecord(metadata)) return null
+  if (typeof metadata.message !== 'string') return null
+  if (
+    metadata.replacement_history !== undefined &&
+    !Array.isArray(metadata.replacement_history)
+  ) {
+    return null
+  }
+  return { ...metadata }
+}
+
 function mapSystemEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   if (entry.subtype === 'compact_boundary') {
+    const payload = extractCodexCompactedPayload(entry)
+    if (!payload) {
+      return []
+    }
     return [
       {
         timestamp: entry.timestamp,
         type: 'compacted',
-        payload: {
-          message: typeof entry.content === 'string' ? entry.content : '',
-          ...((entry.compactMetadata ?? {}) as Record<string, unknown>),
-        },
+        payload,
       },
     ]
   }

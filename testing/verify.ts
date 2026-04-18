@@ -8,7 +8,18 @@ import { fileURLToPath } from 'node:url'
 
 import { toClaude } from '../src/toClaude.js'
 import { toCodex } from '../src/toCodex.js'
-import type { ClaudeEntry, CodexRolloutLine } from '../src/types.js'
+import {
+  createGhost,
+  ghostUuid,
+  isGhostUuid,
+  mergeWithUpstream,
+  orphanGhost,
+  reduceGhostLog,
+  supersedeGhost,
+  updateGhost,
+} from '../src/ghost.js'
+import { isGhost, readSidecar } from '../src/sidecar.js'
+import type { ClaudeEntry, CodexRolloutLine, GhostEntry } from '../src/types.js'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const CODEX_DIR = join(here, '..', 'fixtures', 'codex')
@@ -140,6 +151,192 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
 // ---------------------------------------------------------------------------
 // Native mapping assertions for high-value custom cases
 // ---------------------------------------------------------------------------
+
+{
+  const codexCompacted: CodexRolloutLine[] = [
+    {
+      timestamp: '2026-04-15T10:00:00.000Z',
+      type: 'session_meta',
+      payload: {
+        id: 'sess-compact-codex',
+        timestamp: '2026-04-15T10:00:00.000Z',
+        cwd: '/tmp/project',
+      },
+    },
+    {
+      timestamp: '2026-04-15T10:00:01.000Z',
+      type: 'compacted',
+      payload: {
+        message: 'Summary after compaction',
+        replacement_history: [
+          {
+            type: 'message',
+            role: 'assistant',
+            content: [{ type: 'output_text', text: 'Preserved assistant content' }],
+          },
+        ],
+      },
+    },
+  ]
+  const claude = toClaude(codexCompacted, { lossy: true })
+  const compactBoundary = claude.find(
+    entry => entry.type === 'system' && entry.subtype === 'compact_boundary',
+  )
+  const compactSummaryEntry = claude.find(
+    entry => entry.type === 'user' && entry.isCompactSummary === true,
+  )
+  const roundTrip = toCodex(claude, { lossy: true })
+  const compactedLine = roundTrip.find(line => line.type === 'compacted')
+  check(
+    'Codex compacted -> Claude emits native compact boundary marker text',
+    compactBoundary?.content === 'Conversation compacted',
+  )
+  check(
+    'Codex compacted -> Claude emits an isCompactSummary user entry alongside the boundary',
+    Boolean(
+      compactSummaryEntry &&
+        compactSummaryEntry.isVisibleInTranscriptOnly === true &&
+        Array.isArray(compactSummaryEntry.message?.content) &&
+        (compactSummaryEntry.message?.content as Array<{ text?: string }>)[0]
+          ?.text?.includes('Summary after compaction'),
+    ),
+  )
+  check(
+    'Codex compacted -> Claude summary user entry parentUuid points at the boundary',
+    compactSummaryEntry?.parentUuid === compactBoundary?.uuid,
+  )
+  check(
+    'Codex compacted -> Claude -> Codex preserves replacement_history',
+    stableStringify(compactedLine?.payload) === stableStringify(codexCompacted[1]?.payload),
+  )
+}
+
+// Claude -> Codex: a native Claude compact_boundary followed by an
+// `isCompactSummary: true` user message must coalesce into a single
+// native Codex `compacted` line so Codex's reconstruction path
+// recognizes the session as compacted and truncates pre-compact
+// history on resume.
+{
+  // parentUuid: null so the Claude->Codex->Claude round-trip assertion
+  // compares cleanly; `rethreadParentChain` in toClaude rewrites the
+  // parent chain to match emission order, which would overwrite any
+  // phantom reference to an entry that isn't in the round-trip input.
+  const boundary: ClaudeEntry = {
+    type: 'system',
+    uuid: 'claude-compact-b',
+    parentUuid: null,
+    sessionId: 'sess-compact-claude-native',
+    timestamp: '2026-04-15T11:00:00.000Z',
+    subtype: 'compact_boundary',
+    content: 'Conversation compacted',
+    compactMetadata: { trigger: 'manual', preTokens: 9000 },
+  }
+  const summary: ClaudeEntry = {
+    type: 'user',
+    uuid: 'claude-compact-s',
+    parentUuid: 'claude-compact-b',
+    sessionId: 'sess-compact-claude-native',
+    timestamp: '2026-04-15T11:00:00.500Z',
+    isCompactSummary: true,
+    isVisibleInTranscriptOnly: true,
+    message: {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+Refactored the foo module to extract bar helper.`,
+        },
+      ],
+    },
+  }
+  const nextUser: ClaudeEntry = {
+    type: 'user',
+    uuid: 'claude-after',
+    parentUuid: 'claude-compact-s',
+    sessionId: 'sess-compact-claude-native',
+    timestamp: '2026-04-15T11:00:01.000Z',
+    message: { role: 'user', content: 'continue please' },
+  }
+
+  const codexLossy = toCodex([boundary, summary, nextUser], { lossy: true })
+  const compactedLines = codexLossy.filter(line => line.type === 'compacted')
+  check(
+    'Claude boundary+summary coalesces into exactly one native Codex compacted line',
+    compactedLines.length === 1,
+  )
+  const payload = compactedLines[0]?.payload as {
+    message?: string
+    replacement_history?: Array<Record<string, unknown>>
+  }
+  check(
+    'Claude->Codex compacted.message carries the Codex SUMMARY_PREFIX',
+    typeof payload?.message === 'string' &&
+      payload.message.startsWith(
+        'Another language model started to solve this problem',
+      ),
+  )
+  check(
+    'Claude->Codex compacted.message strips the Claude wrapper preamble',
+    typeof payload?.message === 'string' &&
+      payload.message.includes('Refactored the foo module to extract bar helper.') &&
+      !payload.message.includes(
+        'This session is being continued from a previous conversation',
+      ),
+  )
+  check(
+    'Claude->Codex compacted.replacement_history is a single user InputText item',
+    Array.isArray(payload?.replacement_history) &&
+      payload.replacement_history.length === 1 &&
+      (payload.replacement_history[0] as { role?: string }).role === 'user' &&
+      Array.isArray(
+        (payload.replacement_history[0] as { content?: unknown }).content,
+      ),
+  )
+
+  // Round-trip: Claude -> Codex (non-lossy) -> Claude must recover the
+  // original two Claude entries byte-identically via the array sidecar.
+  const codexFidelity = toCodex([boundary, summary, nextUser])
+  const claudeBack = toClaude(codexFidelity)
+  const backBoundary = claudeBack.find(
+    e => e.type === 'system' && e.subtype === 'compact_boundary',
+  )
+  const backSummary = claudeBack.find(
+    e => e.type === 'user' && e.isCompactSummary === true,
+  )
+  check(
+    'Claude->Codex->Claude round-trip recovers the exact boundary entry',
+    stableStringify(backBoundary) === stableStringify(boundary),
+  )
+  check(
+    'Claude->Codex->Claude round-trip recovers the exact summary entry',
+    stableStringify(backSummary) === stableStringify(summary),
+  )
+}
+
+{
+  const nativeClaudeCompact: ClaudeEntry = {
+    type: 'system',
+    uuid: 'claude-compact-1',
+    parentUuid: null,
+    sessionId: 'sess-compact-claude',
+    timestamp: '2026-04-15T10:01:00.000Z',
+    subtype: 'compact_boundary',
+    content: 'Conversation compacted',
+    compactMetadata: {
+      preservedSegment: {
+        summary: 'Claude-native preserved segment metadata',
+      },
+    },
+  }
+
+  const codex = toCodex([nativeClaudeCompact], { lossy: true })
+  check(
+    'Claude native compact boundary does not fake a native Codex compacted line',
+    !codex.some(line => line.type === 'compacted'),
+  )
+}
 
 {
   const queuedAttachment: ClaudeEntry = {
@@ -1626,6 +1823,198 @@ for (const name of readdirSync(CLAUDE_DIR).filter(f => f.endsWith('.jsonl'))) {
     'default toCodex (dropClaudeBootstrap off) keeps skill_listing summary',
     untouchedText.includes('brainstorm'),
   )
+}
+
+// ---------------------------------------------------------------------------
+// Ghost records — primitives, reducer, merge, converter skip
+// ---------------------------------------------------------------------------
+
+{
+  // --- 1. create → isGhost / readSidecar / deterministic uuid ---
+  const ghost = createGhost({
+    sessionId: 'sess-ghost',
+    turnId: 'turn-1',
+    blockIndex: 0,
+    role: 'assistant',
+    content: [{ type: 'text', text: 'hello…' }],
+    now: 1_000,
+  })
+  check('ghostUuid scheme is g-<turnId>-<blockIndex>', ghost.uuid === 'g-turn-1-0')
+  check('ghostUuid helper agrees', ghost.uuid === ghostUuid('turn-1', 0))
+  check('isGhostUuid recognizes g- prefix', isGhostUuid(ghost.uuid))
+  check('isGhost guards the record', isGhost(ghost))
+  const sidecar = readSidecar(ghost)
+  check(
+    'readSidecar returns ghost variant',
+    sidecar?.origin === 'ghost' &&
+      sidecar.turnId === 'turn-1' &&
+      sidecar.blockIndex === 0 &&
+      sidecar.createdAt === 1_000 &&
+      sidecar.updatedAt === 1_000,
+  )
+
+  // --- 2. update bumps updatedAt, keeps createdAt & uuid ---
+  const updated = updateGhost(
+    ghost,
+    [{ type: 'text', text: 'hello world' }],
+    2_000,
+  )
+  check(
+    'updateGhost preserves createdAt and uuid, bumps updatedAt',
+    updated.uuid === ghost.uuid &&
+      updated._atp.createdAt === 1_000 &&
+      updated._atp.updatedAt === 2_000,
+  )
+  check(
+    'updateGhost returns a new object (no mutation)',
+    ghost._atp.updatedAt === 1_000 && updated !== ghost,
+  )
+
+  // --- 3. supersede marks ghost with realUuid ---
+  const superseded = supersedeGhost(updated, 'real-uuid-xyz', 3_000)
+  check(
+    'supersedeGhost sets supersededBy',
+    superseded._atp.supersededBy === 'real-uuid-xyz' &&
+      superseded._atp.updatedAt === 3_000,
+  )
+
+  // --- 4. orphan marks orphanedAt ---
+  const orphan = createGhost({
+    sessionId: 'sess-ghost',
+    turnId: 'turn-2',
+    blockIndex: 0,
+    role: 'assistant',
+    content: [{ type: 'text', text: 'stranded' }],
+    now: 1_500,
+  })
+  const orphaned = orphanGhost(orphan, 9_000)
+  check('orphanGhost sets orphanedAt', orphaned._atp.orphanedAt === 9_000)
+
+  // --- 5. reduceGhostLog picks freshest per uuid, ignores non-ghosts ---
+  const log: ClaudeEntry[] = [
+    ghost,
+    updated,
+    superseded,
+    orphan,
+    orphaned,
+    // A non-ghost entry that happens to share a sessionId — must be ignored.
+    {
+      type: 'assistant',
+      uuid: 'not-a-ghost',
+      parentUuid: null,
+      sessionId: 'sess-ghost',
+      timestamp: '2026-04-18T00:00:00.000Z',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'real' }] },
+    },
+  ]
+  const state = reduceGhostLog(log)
+  check('reduceGhostLog tracks only ghost entries', state.size === 2)
+  check(
+    'reduceGhostLog picks the freshest snapshot per uuid (turn-1 → superseded)',
+    state.get('g-turn-1-0')?._atp.updatedAt === 3_000 &&
+      state.get('g-turn-1-0')?._atp.supersededBy === 'real-uuid-xyz',
+  )
+  check(
+    'reduceGhostLog preserves orphaned ghost',
+    state.get('g-turn-2-0')?._atp.orphanedAt === 9_000,
+  )
+
+  // --- 6. mergeWithUpstream drops superseded, keeps orphans by default ---
+  const upstream: ClaudeEntry[] = [
+    {
+      type: 'assistant',
+      uuid: 'real-uuid-xyz',
+      parentUuid: null,
+      sessionId: 'sess-ghost',
+      timestamp: '2026-04-18T00:00:01.000Z',
+      message: {
+        role: 'assistant',
+        content: [{ type: 'text', text: 'hello world' }],
+      },
+    },
+  ]
+  const merged = mergeWithUpstream(upstream, state)
+  const mergedUuids = merged.map(e => e.uuid)
+  check(
+    'mergeWithUpstream drops superseded ghost',
+    !mergedUuids.includes('g-turn-1-0'),
+  )
+  check(
+    'mergeWithUpstream keeps upstream entry',
+    mergedUuids.includes('real-uuid-xyz'),
+  )
+  check(
+    'mergeWithUpstream keeps orphaned ghost in the tail',
+    mergedUuids.includes('g-turn-2-0'),
+  )
+  check(
+    'mergeWithUpstream: upstream appears before trailing ghosts',
+    mergedUuids.indexOf('real-uuid-xyz') <
+      mergedUuids.indexOf('g-turn-2-0'),
+  )
+
+  // --- 7. keepSupersededGhosts brings superseded ghosts back ---
+  const mergedKeep = mergeWithUpstream(upstream, state, {
+    keepSupersededGhosts: true,
+  })
+  check(
+    'mergeWithUpstream(keepSupersededGhosts) keeps superseded ghost',
+    mergedKeep.some(e => e.uuid === 'g-turn-1-0'),
+  )
+
+  // --- 8. dropOrphanedGhosts hides orphans ---
+  const mergedDrop = mergeWithUpstream(upstream, state, {
+    dropOrphanedGhosts: true,
+  })
+  check(
+    'mergeWithUpstream(dropOrphanedGhosts) hides orphaned ghost',
+    !mergedDrop.some(e => e.uuid === 'g-turn-2-0'),
+  )
+
+  // --- 9. Converters skip ghost records on export ---
+  //
+  // Both converters must drop ghosts — they're a runtime artifact, not
+  // durable transcript content. The assertions use an input that is
+  // otherwise empty so a leaked ghost would show up immediately.
+  const toCodexOut = toCodex([ghost, updated, orphaned])
+  check(
+    'toCodex: ghost uuids never appear in output',
+    !toCodexOut.some(line => JSON.stringify(line).includes('g-turn-1-0')) &&
+      !toCodexOut.some(line => JSON.stringify(line).includes('g-turn-2-0')),
+  )
+
+  // For toClaude the ghost shape is a ClaudeEntry, but defensively
+  // verify that a Codex line mis-tagged as ghost is also dropped.
+  const ghostAsCodexLine = {
+    timestamp: '2026-04-18T00:00:00.000Z',
+    type: 'message',
+    payload: { type: 'message', role: 'assistant', content: [] },
+    _atp: {
+      origin: 'ghost',
+      turnId: 'turn-3',
+      blockIndex: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    },
+  } as unknown as CodexRolloutLine
+  const toClaudeOut = toClaude([ghostAsCodexLine])
+  check('toClaude: defensively skips ghost-tagged input lines', toClaudeOut.length === 0)
+
+  // --- 10. Malformed ghost sidecars are rejected ---
+  //
+  // A record with origin:'ghost' but missing required fields must not
+  // be treated as a ghost by readSidecar / isGhost. That prevents
+  // hand-edited or partially-written ghost logs from poisoning
+  // reconciliation with half-specified records.
+  const malformed = {
+    ...ghost,
+    _atp: { origin: 'ghost', turnId: 'x' }, // missing blockIndex / timestamps
+  } as GhostEntry
+  check(
+    'readSidecar rejects malformed ghost (missing required fields)',
+    readSidecar(malformed) === null,
+  )
+  check('isGhost returns false for malformed ghost', !isGhost(malformed))
 }
 
 // ---------------------------------------------------------------------------

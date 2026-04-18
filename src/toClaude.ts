@@ -330,6 +330,16 @@ export function toClaude(
   for (const line of lines) {
     const sidecar = readSidecar(line)
 
+    // Ghost line — a provisional record emitted by a live layer
+    // (see `./ghost.ts` and `docs/ghost.md`). Ghosts are a runtime
+    // artifact; they must NOT appear in a durable transcript export.
+    // Skip silently. The ghost's consumer is responsible for
+    // reconciling its own state before feeding a stream to a
+    // converter if it wants any of that state to survive export.
+    if (sidecar?.origin === 'ghost') {
+      continue
+    }
+
     // Synthesized line — toCodex emitted it as boilerplate (prepended
     // session_meta, per-turn task_started / turn_context / task_complete
     // boundary wrappers, etc.). Absorb session_meta / turn_context
@@ -548,8 +558,15 @@ function mergedSidecarField(
   if (sa && sb && sa.origin !== sb.origin) return {}
   const origin = (sa?.origin ?? sb?.origin) as AtpSidecar['origin']
   if (origin === 'synthesized') return { _atp: { origin: 'synthesized' } }
+  // Ghost sidecars do NOT carry a `source` and cannot be meaningfully
+  // coalesced — ghosts represent a single live-layer block, not a
+  // merge of upstream records. `canMerge` should prevent ghosts from
+  // reaching this function, but if one does slip through we fall back
+  // to "no sidecar on the merged entry" rather than inventing data.
+  if (origin === 'ghost') return {}
   const flatten = (s: AtpSidecar | null): Array<ClaudeEntry | CodexRolloutLine> => {
-    if (!s || s.origin === 'synthesized') return []
+    if (!s) return []
+    if (s.origin === 'synthesized' || s.origin === 'ghost') return []
     return sidecarSources(s.source)
   }
   const sources = [...flatten(sa), ...flatten(sb)]
@@ -645,7 +662,7 @@ function mapLine(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry[] {
     case 'event_msg':
       return mapEventMsg(ctx, line, line.payload as CodexEventMsgPayload)
     case 'compacted':
-      return [mapCompacted(ctx, line)]
+      return mapCompacted(ctx, line)
     default:
       return mapUnknown(ctx, line)
   }
@@ -1367,19 +1384,109 @@ function mapEventMsg(
 // Other top-level types
 // ---------------------------------------------------------------------------
 
-function mapCompacted(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry {
+/**
+ * Codex's on-disk summary prefix. Kept in sync with
+ * codex-src/codex-rs/core/templates/compact/summary_prefix.md. Codex
+ * prepends this verbatim to the summary text inside
+ * `CompactedItem.message`. We strip it here so the Claude-side
+ * `isCompactSummary` user message carries just the informational
+ * body, matching what `getCompactUserSummaryMessage` wraps its input
+ * with natively.
+ */
+const CODEX_SUMMARY_PREFIX =
+  'Another language model started to solve this problem and produced a summary of its thinking process. You also have access to the state of the tools that were used by that language model. Use this to build on the work that has already been done and avoid duplicating work. Here is the summary produced by the other language model, use the information in this summary to assist with your own analysis:'
+
+/**
+ * Mirror of Claude's `getCompactUserSummaryMessage` (claude-code-src/
+ * full/services/compact/prompt.ts:337) with `suppressFollowUpQuestions`
+ * and `transcriptPath` omitted — we don't have those at translate time.
+ * The preamble is the load-bearing part: Claude's resume reads the
+ * boundary fence and slices from there, so the immediate next user
+ * message must look like a summary to the model. The preamble is what
+ * makes it read as a handoff rather than a fresh prompt.
+ */
+function wrapClaudeCompactSummary(body: string): string {
+  const trimmed = body.trim()
+  return `This session is being continued from a previous conversation that ran out of context. The summary below covers the earlier portion of the conversation.
+
+${trimmed}`
+}
+
+function mapCompacted(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry[] {
   // A compact boundary restarts Codex's conversation — the assistant
   // messages on either side belong to different logical turns and must
   // not merge. Dropping the current turn id forces the next assistant
   // emission to allocate a fresh one.
   resetTurnMessageId(ctx)
-  return stamp(ctx, {
-    uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'compacted']),
+
+  // Codex packs (fence + summary) into one rollout line. Claude writes
+  // them as TWO adjacent entries: a `system {subtype:compact_boundary}`
+  // fence followed by a `user {isCompactSummary:true}` summary (see
+  // buildPostCompactMessages in claude-code-src/full/services/compact/
+  // compact.ts). We must emit both so Claude's resume path
+  // (`getMessagesAfterCompactBoundary` → slice → normalizeMessagesForAPI)
+  // actually truncates pre-compact history and shows the summary as
+  // the first post-boundary user message. Emitting only the fence
+  // would leave Claude slicing to a void with no summary text —
+  // the model would see nothing where the summary should be.
+  const payload = line.payload as {
+    message?: string
+    replacement_history?: unknown
+  }
+  const rawMessage = typeof payload.message === 'string' ? payload.message : ''
+  const innerSummary = rawMessage.startsWith(`${CODEX_SUMMARY_PREFIX}\n`)
+    ? rawMessage.slice(CODEX_SUMMARY_PREFIX.length + 1)
+    : rawMessage
+
+  const boundaryUuid = stableUuid([
+    ctx.sessionId,
+    ctx.index,
+    line.timestamp,
+    'compacted',
+  ])
+  const summaryUuid = stableUuid([
+    ctx.sessionId,
+    ctx.index,
+    line.timestamp,
+    'compact_summary',
+  ])
+
+  const boundary = stamp(ctx, {
+    uuid: boundaryUuid,
     timestamp: line.timestamp,
     type: 'system',
     subtype: 'compact_boundary',
+    content: 'Conversation compacted',
     compactMetadata: line.payload as Record<string, unknown>,
   })
+
+  // Override parentUuid on the summary to point at the boundary — stamp()
+  // pulls ctx.parentUuid which still reflects whatever came before the
+  // compacted line. Native Claude transcripts write the summary user
+  // entry with parentUuid = boundary.uuid (createUserMessage + the
+  // buildPostCompactMessages ordering), so matching that keeps the
+  // chain well-formed for downstream consumers that walk parent links.
+  const summary: ClaudeEntry = {
+    ...stamp(ctx, {
+      uuid: summaryUuid,
+      timestamp: line.timestamp,
+      type: 'user',
+      isCompactSummary: true,
+      isVisibleInTranscriptOnly: true,
+      message: {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: wrapClaudeCompactSummary(innerSummary),
+          },
+        ],
+      },
+    }),
+    parentUuid: boundaryUuid,
+  }
+
+  return [boundary, summary]
 }
 
 function mapUnknown(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry[] {
