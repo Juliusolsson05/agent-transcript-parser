@@ -308,6 +308,40 @@ export function reduceGhostLog(
   return out
 }
 
+/**
+ * Fold a ghost log and drop every ghost whose final state is
+ * `supersededBy`.
+ *
+ * WHY this exists as a separate helper:
+ *
+ *   Some consumers (cc-shell is the canonical one) only want the
+ *   provisional-and-still-live set of ghosts on resume. They never
+ *   want the forensic "we rendered X but upstream confirmed Y" rows
+ *   that the default `reduceGhostLog` + `mergeWithUpstream` path
+ *   leaves visible. Giving those consumers a tightly-scoped reader
+ *   keeps the default log reducer honest (it still returns every
+ *   ghost in its final state, forensic or not) while letting the
+ *   caller pre-trim the set before merging.
+ *
+ *   Pair with {@link MergeOptions.trustSupersededFlag} if you hold
+ *   only a recent tail of upstream and cannot prove the target
+ *   uuid is visible — the two options together ensure reconciled
+ *   ghosts stay reconciled across disk-reload boundaries.
+ *
+ * Orphaned ghosts are kept — they are the only record that the
+ * block ever existed. Superseded ghosts are dropped because their
+ * content is covered by the committed upstream entry.
+ */
+export function reduceGhostLogSansSuperseded(
+  entries: readonly ClaudeEntry[],
+): Map<string, GhostEntry> {
+  const full = reduceGhostLog(entries)
+  for (const [uuid, ghost] of full) {
+    if (ghost._atp.supersededBy !== undefined) full.delete(uuid)
+  }
+  return full
+}
+
 // -----------------------------------------------------------------------------
 // mergeWithUpstream — render-time merge of upstream + ghost state
 // -----------------------------------------------------------------------------
@@ -326,6 +360,22 @@ export type MergeOptions = {
    *  orphans keep rendering because they're the only record of that
    *  block ever existing. */
   dropOrphanedGhosts?: boolean
+  /** When true, a ghost with `supersededBy` set is treated as
+   *  superseded regardless of whether its target uuid appears in
+   *  `upstream`. Opt-in because the default behaviour (drop only
+   *  when the target is visible) is the safer forensic story: if
+   *  "X was replaced by Y" but we can't see Y, we keep showing X.
+   *
+   *  This flag exists for consumers like cc-shell that only ever
+   *  hold a RECENT TAIL of the upstream transcript — the target uuid
+   *  might be a committed entry from two hours ago that simply isn't
+   *  in the loaded slice. Without this flag, every ghost that
+   *  actually got reconciled in a prior session resurfaces on resume
+   *  as an orphan because its target is outside the window.
+   *
+   *  Mutually exclusive with `keepSupersededGhosts` — setting both
+   *  is a caller error and the keep flag wins (no silent drop). */
+  trustSupersededFlag?: boolean
 }
 
 /**
@@ -354,23 +404,33 @@ export function mergeWithUpstream(
   opts: MergeOptions = {},
 ): ClaudeEntry[] {
   const keepSuperseded = opts.keepSupersededGhosts === true
+  const trustSuperseded = opts.trustSupersededFlag === true && !keepSuperseded
   const dropOrphaned = opts.dropOrphanedGhosts === true
 
   // Index upstream uuids so we can ask "is this ghost's supersededBy
-  // satisfied?" in O(1).
+  // satisfied?" in O(1). Skipped when `trustSupersededFlag` is set
+  // because in that mode we don't need the target uuid to be visible.
   const upstreamUuids = new Set<string>()
-  for (const entry of upstream) {
-    if (typeof entry.uuid === 'string' && entry.uuid.length > 0) {
-      upstreamUuids.add(entry.uuid)
+  if (!trustSuperseded) {
+    for (const entry of upstream) {
+      if (typeof entry.uuid === 'string' && entry.uuid.length > 0) {
+        upstreamUuids.add(entry.uuid)
+      }
     }
   }
 
   const trailing: GhostEntry[] = []
   for (const ghost of ghosts.values()) {
     const sidecar = ghost._atp
-    const isSuperseded =
-      typeof sidecar.supersededBy === 'string' &&
-      upstreamUuids.has(sidecar.supersededBy)
+    const supersededBy = sidecar.supersededBy
+    const hasSupersededFlag = typeof supersededBy === 'string'
+    // With `trustSupersededFlag`, the mere presence of `supersededBy`
+    // marks the ghost as reconciled. Default behaviour still verifies
+    // the target is in-upstream so forensic "X was replaced but we
+    // can't show Y" rows stay visible.
+    const isSuperseded = hasSupersededFlag && (
+      trustSuperseded || upstreamUuids.has(supersededBy)
+    )
     if (isSuperseded && !keepSuperseded) continue
     if (sidecar.orphanedAt !== undefined && dropOrphaned) continue
     trailing.push(ghost)
@@ -397,3 +457,10 @@ export function mergeWithUpstream(
 // working set without a second import from `./sidecar`. The originals
 // still live next to the other sidecar utilities for discoverability.
 export { ghostSidecar, isGhost } from './sidecar.js'
+export type {
+  ClaudeContentBlock,
+  ClaudeTextBlock,
+  ClaudeThinkingBlock,
+  ClaudeToolUseBlock,
+  GhostEntry,
+} from './types.js'

@@ -15,6 +15,7 @@ import {
   mergeWithUpstream,
   orphanGhost,
   reduceGhostLog,
+  reduceGhostLogSansSuperseded,
   supersedeGhost,
   updateGhost,
 } from '../src/ghost.js'
@@ -1969,6 +1970,40 @@ Refactored the foo module to extract bar helper.`,
   check(
     'mergeWithUpstream(dropOrphanedGhosts) hides orphaned ghost',
     !mergedDrop.some(e => e.uuid === 'g-turn-2-0'),
+  )
+
+  // --- 8b. trustSupersededFlag drops superseded ghosts even when
+  //         the target uuid is outside the loaded upstream window.
+  //         This is the resume-on-recent-tail case: a ghost was
+  //         reconciled yesterday, its target uuid is long gone from
+  //         the current tail, and without the flag the ghost would
+  //         resurface as an orphan.
+  const supersededInPastGhost = supersedeGhost(ghost, 'real-archived-1')
+  const stateWithArchivedSupersede = new Map<string, GhostEntry>([
+    [supersededInPastGhost.uuid, supersededInPastGhost],
+  ])
+  const mergedDefault = mergeWithUpstream([], stateWithArchivedSupersede)
+  check(
+    'mergeWithUpstream default: resurfaces superseded ghost when target is missing',
+    mergedDefault.length === 1 && mergedDefault[0].uuid === ghost.uuid,
+  )
+  const mergedTrust = mergeWithUpstream([], stateWithArchivedSupersede, {
+    trustSupersededFlag: true,
+  })
+  check(
+    'mergeWithUpstream(trustSupersededFlag) drops superseded ghost regardless of target visibility',
+    mergedTrust.length === 0,
+  )
+
+  // --- 8c. reduceGhostLogSansSuperseded drops superseded at load time ---
+  const stateSansSup = reduceGhostLogSansSuperseded(log)
+  check(
+    'reduceGhostLogSansSuperseded drops superseded ghost entries',
+    !stateSansSup.has('g-turn-1-0'),
+  )
+  check(
+    'reduceGhostLogSansSuperseded keeps orphaned ghost entries',
+    stateSansSup.has('g-turn-2-0'),
   )
 
   // --- 9. Converters skip ghost records on export ---
