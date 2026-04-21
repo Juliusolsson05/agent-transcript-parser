@@ -63,6 +63,29 @@ export type ConvertOptions = {
    * Ignored by `toClaude`.
    */
   dropClaudeBootstrap?: boolean
+  /**
+   * Only consulted by `toCodex`. When true, strip one-shot history
+   * mutations from codex-origin sidecar sources before re-emitting
+   * them. Specifically:
+   *
+   *   - drops `event_msg:thread_rolled_back` (otherwise codex re-applies
+   *     `/rollback N` on every resume — observed as "jumped back N
+   *     messages" after a provider switch)
+   *   - drops `event_msg:turn_aborted` and `event_msg:context_compacted`
+   *     (stale segment signals)
+   *   - strips `replacement_history` from `compacted` lines (codex falls
+   *     back to rebuilding from live user messages, which is the correct
+   *     behavior when the snapshot is stale)
+   *
+   * The default is OFF to preserve byte-identical round-trip fidelity
+   * for backup/export use cases. cc-shell's provider-switch turns it ON
+   * because the output file is about to be RESUMED by codex, and
+   * preserving those mutations would re-apply them on resume (dropping
+   * user-visible turns the source session already committed).
+   *
+   * Ignored by `toClaude`.
+   */
+  sanitizeForResume?: boolean
 }
 
 type Ctx = {

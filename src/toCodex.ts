@@ -41,6 +41,16 @@ export function toCodex(
   // a giant commentary block on resume. Default stays off so existing
   // round-trip fidelity tests keep passing byte-for-byte.
   const dropClaudeBootstrap = opts.dropClaudeBootstrap === true
+  // Provider-switch in cc-shell (Claude → Codex) turns this on so that
+  // codex-origin sidecars carrying one-shot history mutations
+  // (thread_rolled_back, turn_aborted, compacted with a stale
+  // replacement_history) are stripped before emission. Without this,
+  // codex's resume re-applies those mutations on every provider switch,
+  // producing the "jumped back N messages" class of bug. Default stays
+  // off because fixtures in this package verify byte-identical
+  // Codex→Claude→Codex round-trip, which requires the sidecar contents
+  // to flow through untouched.
+  const sanitizeForResume = opts.sanitizeForResume === true
   // Reusing the source Claude session id as the target Codex thread id
   // looks convenient, but it causes real collisions during resume
   // testing: multiple imported rollout files with the same id can
@@ -127,12 +137,24 @@ export function toCodex(
         ? (sidecar.source as CodexRolloutLine[])
         : [sidecar.source as CodexRolloutLine]
       for (const source of sources) {
-        const sourceKey = JSON.stringify(source)
+        // When `sanitizeForResume` is on, strip one-shot history
+        // mutations before re-emitting. The original session already
+        // applied these; codex's resume would re-apply them on every
+        // provider switch, producing the "jumped back N messages" bug
+        // we observed in cc-shell. See sanitizeCodexSourceForReplay for
+        // the full rationale. When off, re-emit verbatim to keep
+        // Codex→Claude→Codex byte-identical (checked by package
+        // fixtures).
+        const emitted = sanitizeForResume
+          ? sanitizeCodexSourceForReplay(source)
+          : source
+        if (!emitted) continue
+        const sourceKey = JSON.stringify(emitted)
         if (seenSourceKeys.has(sourceKey)) continue
         seenSourceKeys.add(sourceKey)
-        out.push(source)
-        if (source.type === 'session_meta') sessionMetaEmitted = true
-        const sourceCwd = codexLineCwd(source)
+        out.push(emitted)
+        if (emitted.type === 'session_meta') sessionMetaEmitted = true
+        const sourceCwd = codexLineCwd(emitted)
         if (sourceCwd) turnCwd = sourceCwd
       }
       continue
@@ -280,6 +302,18 @@ export function toCodex(
           sandbox_policy: { type: 'workspace-write' },
           model: 'gpt-5',
           personality: 'pragmatic',
+          // `summary` is a REQUIRED field on TurnContextItem (see
+          // codex-rs/protocol/src/protocol.rs:2810). Omitting it makes
+          // codex's load_rollout_items silently fail to deserialize the
+          // line (counted in parse_errors, then skipped). Response
+          // items still replay so conversation content is intact, but
+          // codex loses the per-turn metadata used by
+          // reconstruct_history_from_rollout's reverse scan to finalize
+          // segments and anchor resume state. 'auto' matches codex's
+          // own default in fresh sessions — any valid variant works;
+          // 'auto' is the safest pick because it surrenders the choice
+          // back to codex's configured default on resume.
+          summary: 'auto',
         },
       }))
     }
@@ -720,6 +754,107 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
     return `[User attached document: ${title}]`
   }
   return null
+}
+
+/**
+ * Rewrite or drop a codex-origin source line before re-emitting it
+ * through the sidecar short-circuit. Returns the line to emit, or
+ * `null` to skip it entirely.
+ *
+ * WHY this exists:
+ * -----------------
+ * The sidecar short-circuit re-emits codex lines byte-identical for
+ * round-trip fidelity. That's correct for CONTENT-bearing lines
+ * (response_item:message, function_call, function_call_output,
+ * reasoning, agent_message, etc.) but wrong for lines whose semantics
+ * are ONE-SHOT HISTORY MUTATIONS consumed by
+ * `reconstruct_history_from_rollout` at resume time. Those mutations
+ * were already applied in the ORIGINAL session's view of history;
+ * re-applying them on every subsequent resume is a bug with real user
+ * impact — provable:
+ *
+ *   - `event_msg:thread_rolled_back` → codex-rs/core/src/codex/
+ *     rollout_reconstruction.rs:130-132 records it as
+ *     `pending_rollback_turns`, then `finalize_active_segment`
+ *     (line 53-58) SKIPS the next N user-turn segments during the
+ *     reverse walk. A source session's past `/rollback 2` resumes as
+ *     "drop the last 2 user turns again" every time the user switches
+ *     provider — observed in cc-shell as the "jumped back N messages"
+ *     symptom.
+ *
+ *   - `compacted` with `replacement_history` → rollout_reconstruction.
+ *     rs:251-254 calls `history.replace(replacement_history.clone())`
+ *     on forward replay. A source session's old /compact with a
+ *     19-item replacement_history, round-tripped through cc-shell's
+ *     Claude→Codex switch, truncates the resumed conversation back to
+ *     those 19 items every time. (The message text is preserved so the
+ *     compact boundary still marks correctly; only the `replace` effect
+ *     is destructive.)
+ *
+ *   - `event_msg:turn_aborted` → rollout_reconstruction.rs:143-156
+ *     uses it during the reverse scan to seed the `active_segment`
+ *     turn_id. A stale abort signal from a past session can cause the
+ *     reverse walk to attribute subsequent events to the wrong
+ *     segment, leaving resume metadata inconsistent.
+ *
+ *   - `event_msg:context_compacted` → legacy compaction signal; same
+ *     class of stale-footprint problem.
+ *
+ * WHY drop these instead of rewriting their sidecars:
+ * ----------------------------------------------------
+ * The sidecar's purpose is to preserve Codex→Claude→Codex round-trip
+ * IN AN IDLE FILE — e.g. for backup/export tooling that never resumes
+ * the output. cc-shell's use case is different: the output IS about
+ * to be resumed by Codex. Resume safety outweighs round-trip fidelity
+ * for these specific event types, and the corresponding Claude-side
+ * sentinel (`system:codex_event_msg` / `system:compact_boundary`)
+ * still exists in any Claude file that carried these through — so a
+ * pure-export path that needs byte-identical fidelity can still
+ * recover them by reading the Claude file directly rather than
+ * round-tripping through a Codex translation.
+ *
+ * WHY keep `compacted.message` but strip `replacement_history`:
+ * -------------------------------------------------------------
+ * Codex's reconstruction falls back to `build_compacted_history`
+ * (compact.rs) when a `compacted` line has no `replacement_history`
+ * (rollout_reconstruction.rs:256-272). That fallback still treats the
+ * line as a compaction boundary and still rebuilds a summary-based
+ * history, but it DERIVES the replacement from the rollout's own
+ * user messages rather than REPLAYING a frozen snapshot. Crucially,
+ * the derived replacement reflects the CURRENT rollout's content,
+ * including any Claude-side turns added after the boundary — so the
+ * resumed conversation sees everything the user actually did.
+ */
+function sanitizeCodexSourceForReplay(
+  line: CodexRolloutLine,
+): CodexRolloutLine | null {
+  if (line.type === 'event_msg') {
+    const payload = line.payload as { type?: string }
+    if (
+      payload.type === 'thread_rolled_back' ||
+      payload.type === 'turn_aborted' ||
+      payload.type === 'context_compacted'
+    ) {
+      return null
+    }
+  }
+  if (line.type === 'compacted') {
+    const payload = line.payload as {
+      message?: string
+      replacement_history?: unknown
+    }
+    if (Array.isArray(payload.replacement_history)) {
+      // Preserve the boundary + summary, drop the snapshot. Codex's
+      // reconstruction re-derives replacement content from the live
+      // rollout instead of replaying the frozen one.
+      const { replacement_history: _unused, ...rest } = payload
+      return {
+        ...line,
+        payload: { ...rest, message: typeof payload.message === 'string' ? payload.message : '' },
+      } as CodexRolloutLine
+    }
+  }
+  return line
 }
 
 function codexLineCwd(line: CodexRolloutLine): string | undefined {
