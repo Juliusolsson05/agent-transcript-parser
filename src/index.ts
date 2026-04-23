@@ -10,6 +10,27 @@ export type { CloneClaudeOptions, CloneClaudeResult } from './cloneClaude.js'
 export { cloneCodexRollout } from './cloneCodex.js'
 export type { CloneCodexOptions, CloneCodexResult } from './cloneCodex.js'
 
+export {
+  rewindClaudeTranscript,
+  RewindClaudeAnchorNotFoundError,
+} from './rewindClaude.js'
+export type {
+  RewindClaudeAnchor,
+  RewindClaudeOptions,
+  RewindClaudeResult,
+} from './rewindClaude.js'
+
+export {
+  rewindCodexRollout,
+  RewindCodexAnchorNotFoundError,
+  RewindCodexMissingSessionMetaError,
+} from './rewindCodex.js'
+export type {
+  RewindCodexAnchor,
+  RewindCodexOptions,
+  RewindCodexResult,
+} from './rewindCodex.js'
+
 export { detectFormat } from './detectFormat.js'
 
 export {
