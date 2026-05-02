@@ -26,16 +26,30 @@ This means: convert your transcripts to the other format, switch agents, switch 
 
 Pass `{ lossy: true }` to skip the sidecar (smaller files, no round-trip guarantee).
 
+## Install
+
+```bash
+npm install agent-transcript-parser
+```
+
+Node 18+, ESM-only.
+
 ## API
 
 ```ts
-import { toClaude, toCodex, detectFormat } from 'agent-transcript-parser'
+import {
+  toClaude,
+  toCodex,
+  detectFormat,
+  cloneClaudeTranscript,
+  cloneCodexRollout,
+  rewindClaudeTranscript,
+  rewindCodexRollout,
+} from 'agent-transcript-parser'
 
 toClaude(codexLines, opts?)        // CodexRolloutLine[] → ClaudeEntry[]
 toCodex(claudeEntries, opts?)      // ClaudeEntry[] → CodexRolloutLine[]
 detectFormat(input)                // 'claude' | 'codex' | 'unknown'
-
-type ConvertOptions = { lossy?: boolean }
 ```
 
 Current shared options:
@@ -43,11 +57,42 @@ Current shared options:
 ```ts
 type ConvertOptions = {
   lossy?: boolean
-  targetSessionId?: string // used by toCodex when synthesizing session_meta
+  targetSessionId?: string  // used by toCodex when synthesizing session_meta
+  sanitizeForResume?: boolean  // toCodex: strip one-shot history mutations
 }
 ```
 
 Plus typed exports for every Claude / Codex shape variant and the sidecar utilities (`ATP_KEY`, `attachSidecar`, `readSidecar`, `stripSidecar`).
+
+## Clone a transcript
+
+Duplicate a session under a fresh id so the resume picker sees it as an independent conversation. Per-entry uuids are preserved by default (Claude's resume flow doesn't cross-reference them across files); pass `regenerateEntryUuids` if you want zero overlap.
+
+```ts
+const { entries, newSessionId } = cloneClaudeTranscript(source, {
+  // newSessionId?: string         — defaults to a fresh UUID
+  // titleSuffix?: string | null   — appended to customTitle entries; default ' (copy)'
+  // regenerateEntryUuids?: boolean
+})
+
+const { lines, newSessionId } = cloneCodexRollout(source, { /* ... */ })
+```
+
+## Rewind a transcript
+
+Rewind to "just before" a chosen user prompt. Everything from the anchored prompt onward is dropped, the result is written under a new session id, and orphaned tool-use pairs (or stranded `compact_boundary` markers) are cleaned up so the truncated file still loads natively.
+
+```ts
+const { entries, newSessionId } = rewindClaudeTranscript(source, {
+  anchor: { uuid: '…' },  // user-role entry to rewind to
+})
+
+const { lines, newSessionId } = rewindCodexRollout(source, {
+  anchor: { /* … */ },
+})
+```
+
+Throws `RewindClaudeAnchorNotFoundError` / `RewindCodexAnchorNotFoundError` when the anchor isn't present in the source, and `RewindCodexMissingSessionMetaError` if the Codex rollout lacks a `session_meta` line.
 
 ## Ghost records
 
@@ -106,6 +151,25 @@ npm install
 npm run build       # tsc → dist/
 npm run verify      # synthetic round-trip harness
 npx tsx testing/real-transcripts.ts   # round-trip against ~/.codex/sessions and ~/.claude/projects
+```
+
+## Layout
+
+```
+src/
+  toClaude.ts / toCodex.ts        translators
+  cloneClaude.ts / cloneCodex.ts  session duplication
+  rewindClaude.ts / rewindCodex.ts truncate-before-anchor
+  detectFormat.ts                 input-shape detection
+  sidecar.ts                      _atp envelope (lossless round-trip)
+  ghost.ts                        provisional/ghost record helpers
+  types.ts                        Claude + Codex JSONL shape types
+docs/
+  ghost.md                        ghost record design + reconciliation
+  implementation-plan.md          known gaps and roadmap
+testing/
+  verify.ts                       synthetic fixture round-trip
+fixtures/                         hand-crafted JSONL samples
 ```
 
 ## License
