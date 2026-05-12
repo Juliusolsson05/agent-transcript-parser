@@ -51,9 +51,9 @@
 //     never phones home, never tails a file, never opens a socket. All IO
 //     is the caller's responsibility.
 //
-//  5. No cc-shell vocabulary bleeds in. This file is part of a standalone
+//  5. No Agent Code vocabulary bleeds in. This file is part of a standalone
 //     library; it must read sensibly to a consumer that has never heard of
-//     cc-shell, claude-code-headless, codex-headless, or any specific UI.
+//     Agent Code, claude-code-headless, codex-headless, or any specific UI.
 
 import { ATP_KEY } from './types.js'
 import type {
@@ -314,7 +314,7 @@ export function reduceGhostLog(
  *
  * WHY this exists as a separate helper:
  *
- *   Some consumers (cc-shell is the canonical one) only want the
+ *   Some consumers (Agent Code is the canonical one) only want the
  *   provisional-and-still-live set of ghosts on resume. They never
  *   want the forensic "we rendered X but upstream confirmed Y" rows
  *   that the default `reduceGhostLog` + `mergeWithUpstream` path
@@ -366,7 +366,7 @@ export type MergeOptions = {
    *  when the target is visible) is the safer forensic story: if
    *  "X was replaced by Y" but we can't see Y, we keep showing X.
    *
-   *  This flag exists for consumers like cc-shell that only ever
+   *  This flag exists for consumers like Agent Code that only ever
    *  hold a RECENT TAIL of the upstream transcript — the target uuid
    *  might be a committed entry from two hours ago that simply isn't
    *  in the loaded slice. Without this flag, every ghost that

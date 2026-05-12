@@ -21,7 +21,7 @@
 // the renderer's picker sees, so it is also what we match on.
 //
 // The returned `promptText` is the text content of the anchored
-// message. cc-shell puts it into `draftInput`; it is intentionally
+// message. Agent Code puts it into `draftInput`; it is intentionally
 // NOT present in the output lines.
 //
 // WHY a dedicated entry-point instead of reusing cloneCodexRollout:

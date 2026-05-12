@@ -9,7 +9,7 @@
 //
 // The caller supplies the anchor as the Claude-native user entry
 // `uuid`. The prompt text is intentionally NOT written into the
-// truncated transcript — cc-shell hands it back to the renderer as a
+// truncated transcript — Agent Code hands it back to the renderer as a
 // `draftInput` so the user can edit/re-send or just rewrite from
 // scratch. The feature is "continue from here with an unsent draft",
 // not "replay this prompt automatically".
@@ -34,7 +34,7 @@
 //
 // This file owns the transcript-shape rules. Filesystem IO and
 // session-file naming live in `src/main/providerSwitch/rewindSession.ts`
-// in cc-shell so the parser package stays browser-buildable and
+// in Agent Code so the parser package stays browser-buildable and
 // free of Node fs imports, matching the layering of `cloneClaude.ts`.
 
 import { randomUUID } from 'node:crypto'
@@ -78,7 +78,7 @@ export type RewindClaudeResult = {
    *  `textForResubmit`:
    *    1. If the text contains a `<bash-input>` tag, the unwrapped
    *       body is returned as-is (renderer prefills bash mode, which
-   *       for cc-shell means prefixing `!` on the draft).
+   *       for Agent Code means prefixing `!` on the draft).
    *    2. If it contains a `<command-name>` tag, the return shape is
    *       `<cmd> <args>` so the renderer can populate a slash-command
    *       invocation.
@@ -91,7 +91,7 @@ export type RewindClaudeResult = {
   promptText: string
   /** The `mode` Claude Code's composer would use for the prefill. See
    *  claude-code-src/utils/messages.ts — `'bash'` when the anchor was
-   *  a bash-input prompt, otherwise `'prompt'`. cc-shell's composer
+   *  a bash-input prompt, otherwise `'prompt'`. Agent Code's composer
    *  does not have a discrete bash mode today, but exposing the hint
    *  lets the caller prefix `!` (or open a bash submode) if desired. */
   promptMode: 'prompt' | 'bash'
