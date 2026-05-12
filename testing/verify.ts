@@ -1679,7 +1679,7 @@ Refactored the foo module to extract bar helper.`,
 // dropClaudeBootstrap — provider-switch cleanup invariant
 // ---------------------------------------------------------------------------
 //
-// When the cc-shell workspace switches a session from Claude back to
+// When the Agent Code workspace switches a session from Claude back to
 // Codex, the Claude JSONL carries a fat `<system-reminder>` block
 // (tool list, MCP instructions, skill listing, Todoist notes, etc.)
 // plus a family of housekeeping attachments. Those are Claude-local

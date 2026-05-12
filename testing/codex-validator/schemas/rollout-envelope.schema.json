@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://cc-shell/codex-validator/rollout-envelope",
+  "$id": "https://Agent Code/codex-validator/rollout-envelope",
   "title": "CodexRolloutLine",
   "description": "On-disk rollout line shape. Hand-authored from codex-rs/protocol/src/protocol.rs::{RolloutLine, RolloutItem, SessionMetaLine, TurnContextItem, CompactedItem, EventMsg}. Upstream does NOT export this as JSON schema (it's internal persistence, not part of the app-server JSON-RPC API). Keep in lockstep with the Rust structs.",
 
