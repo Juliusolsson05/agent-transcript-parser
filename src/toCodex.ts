@@ -60,7 +60,7 @@ export function toCodex(
   opts: ConvertOptions = {},
 ): CodexRolloutLine[] {
   const lossy = opts.lossy === true
-  // Provider-switch in Agent Code (Claude → Codex) turns this on so the
+  // Provider-switch callers (Claude → Codex) turn this on so the
   // translated rollout does not inherit Claude's self-injected bootstrap
   // burst (tool list, MCP instructions, skill listing, todo reminders).
   // Those entries are Claude-local housekeeping; Codex has its own
@@ -68,7 +68,7 @@ export function toCodex(
   // a giant commentary block on resume. Default stays off so existing
   // round-trip fidelity tests keep passing byte-for-byte.
   const dropClaudeBootstrap = opts.dropClaudeBootstrap === true
-  // Provider-switch in Agent Code (Claude → Codex) turns this on so that
+  // Provider-switch callers (Claude → Codex) turn this on so that
   // codex-origin sidecars carrying one-shot history mutations
   // (thread_rolled_back, turn_aborted, compacted with a stale
   // replacement_history) are stripped before emission. Without this,
@@ -168,7 +168,7 @@ export function toCodex(
         // mutations before re-emitting. The original session already
         // applied these; codex's resume would re-apply them on every
         // provider switch, producing the "jumped back N messages" bug
-        // we observed in Agent Code. See sanitizeCodexSourceForReplay for
+        // observed in production. See sanitizeCodexSourceForReplay for
         // the full rationale. When off, re-emit verbatim to keep
         // Codex→Claude→Codex byte-identical (checked by package
         // fixtures).
@@ -802,15 +802,14 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
  *     (line 53-58) SKIPS the next N user-turn segments during the
  *     reverse walk. A source session's past `/rollback 2` resumes as
  *     "drop the last 2 user turns again" every time the user switches
- *     provider — observed in Agent Code as the "jumped back N messages"
- *     symptom.
+ *     provider — observed as the "jumped back N messages" symptom.
  *
  *   - `compacted` with `replacement_history` → rollout_reconstruction.
  *     rs:251-254 calls `history.replace(replacement_history.clone())`
  *     on forward replay. A source session's old /compact with a
- *     19-item replacement_history, round-tripped through Agent Code's
- *     Claude→Codex switch, truncates the resumed conversation back to
- *     those 19 items every time. (The message text is preserved so the
+ *     19-item replacement_history, round-tripped through a
+ *     Claude→Codex provider switch, truncates the resumed conversation
+ *     back to those 19 items every time. (The message text is preserved so the
  *     compact boundary still marks correctly; only the `replace` effect
  *     is destructive.)
  *
@@ -827,8 +826,8 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
  * ----------------------------------------------------
  * The sidecar's purpose is to preserve Codex→Claude→Codex round-trip
  * IN AN IDLE FILE — e.g. for backup/export tooling that never resumes
- * the output. Agent Code's use case is different: the output IS about
- * to be resumed by Codex. Resume safety outweighs round-trip fidelity
+ * the output. The provider-switch use case is different: the output
+ * IS about to be resumed by Codex. Resume safety outweighs round-trip fidelity
  * for these specific event types, and the corresponding Claude-side
  * sentinel (`system:codex_event_msg` / `system:compact_boundary`)
  * still exists in any Claude file that carried these through — so a
