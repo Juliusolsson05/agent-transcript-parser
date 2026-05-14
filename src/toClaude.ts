@@ -280,6 +280,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null
 }
 
+function isToolResultLike(value: unknown): boolean {
+  return isRecord(value) && value.type === 'tool_result'
+}
+
 function syntheticClaudeMessageId(parts: Array<string | number>): string {
   // `msg_<hex>` is the shape Anthropic itself uses for assistant message
   // ids. Matching it keeps any downstream tool that regex-matches
@@ -510,9 +514,7 @@ function canMergeToolResultUsers(a: ClaudeEntry, b: ClaudeEntry): boolean {
   const bc = b.message?.content
   if (!Array.isArray(ac) || !Array.isArray(bc)) return false
   const hasTr = (blocks: unknown[]) =>
-    blocks.some(
-      b => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_result',
-    )
+    blocks.some(isToolResultLike)
   if (!hasTr(ac) || !hasTr(bc)) return false
   return sidecarOriginCompatible(a, b)
 }
@@ -526,12 +528,14 @@ function sidecarOriginCompatible(a: ClaudeEntry, b: ClaudeEntry): boolean {
 }
 
 function mergeAssistants(a: ClaudeEntry, b: ClaudeEntry): ClaudeEntry {
+  const message = a.message
+  if (!message) return a
   const aContent = Array.isArray(a.message?.content) ? a.message.content : []
   const bContent = Array.isArray(b.message?.content) ? b.message.content : []
   return {
     ...a,
     message: {
-      ...(a.message as NonNullable<typeof a.message>),
+      ...message,
       content: [...aContent, ...bContent],
     },
     ...mergedSidecarField(a, b),
@@ -539,23 +543,20 @@ function mergeAssistants(a: ClaudeEntry, b: ClaudeEntry): ClaudeEntry {
 }
 
 function mergeUsers(a: ClaudeEntry, b: ClaudeEntry): ClaudeEntry {
+  const message = a.message
+  if (!message) return a
   const aContent = Array.isArray(a.message?.content) ? a.message.content : []
   const bContent = Array.isArray(b.message?.content) ? b.message.content : []
   // tool_results first, other content after — mirrors claude-code-src's
   // hoistToolResults. Keeps any paired assistant tool_use visible to
   // the API's tool_use_id → tool_result linkage check.
   const combined = [...aContent, ...bContent]
-  const toolResults = combined.filter(
-    b => typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_result',
-  )
-  const other = combined.filter(
-    b =>
-      !(typeof b === 'object' && b !== null && (b as { type?: string }).type === 'tool_result'),
-  )
+  const toolResults = combined.filter(isToolResultLike)
+  const other = combined.filter(block => !isToolResultLike(block))
   return {
     ...a,
     message: {
-      ...(a.message as NonNullable<typeof a.message>),
+      ...message,
       content: [...toolResults, ...other],
     },
     ...mergedSidecarField(a, b),
@@ -579,7 +580,8 @@ function mergedSidecarField(
   // shouldn't have merged — canMerge guards above prevent that path,
   // so this is defensive.
   if (sa && sb && sa.origin !== sb.origin) return {}
-  const origin = (sa?.origin ?? sb?.origin) as AtpSidecar['origin']
+  const origin = sa?.origin ?? sb?.origin
+  if (!origin) return {}
   if (origin === 'synthesized') return { _atp: { origin: 'synthesized' } }
   // Ghost sidecars do NOT carry a `source` and cannot be meaningfully
   // coalesced — ghosts represent a single live-layer block, not a
@@ -626,7 +628,7 @@ function absorbClaudeSourceContext(ctx: Ctx, source: ClaudeEntry): void {
   // we clear the turn id so the next assistant allocates a fresh one.
   const sourceMid =
     source.type === 'assistant'
-      ? (source.message as { id?: string } | undefined)?.id
+      ? source.message?.id
       : undefined
   if (typeof sourceMid === 'string') {
     ctx.turnMessageId = sourceMid
@@ -1359,23 +1361,22 @@ function mapEventMsg(
     }
   }
   if (payload.type === 'exec_approval_request') {
-    const p = payload as {
-      type: 'exec_approval_request'
-      call_id: string
-      command: string[]
-      workdir?: string
-    }
+    const command = Array.isArray(payload.command)
+      ? payload.command.filter((part): part is string => typeof part === 'string')
+      : []
+    const callId = typeof payload.call_id === 'string' ? payload.call_id : 'unknown'
+    const workdir = typeof payload.workdir === 'string' ? payload.workdir : undefined
     const lines = [
       'Permission required before running a command.',
-      p.command.length > 0 ? `Command: ${p.command.join(' ')}` : null,
-      p.workdir ? `Directory: ${p.workdir}` : null,
+      command.length > 0 ? `Command: ${command.join(' ')}` : null,
+      workdir ? `Directory: ${workdir}` : null,
     ]
       .filter((l): l is string => l !== null)
       .join('\n')
     const block: ClaudeTextBlock = { type: 'text', text: lines }
     return [
       stamp(ctx, {
-        uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'exec_approval', p.call_id]),
+        uuid: stableUuid([ctx.sessionId, ctx.index, line.timestamp, 'exec_approval', callId]),
         timestamp: line.timestamp,
         type: 'assistant',
         message: {
@@ -1452,11 +1453,8 @@ function mapCompacted(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry[] {
   // the first post-boundary user message. Emitting only the fence
   // would leave Claude slicing to a void with no summary text —
   // the model would see nothing where the summary should be.
-  const payload = line.payload as {
-    message?: string
-    replacement_history?: unknown
-  }
-  const rawMessage = typeof payload.message === 'string' ? payload.message : ''
+  const payloadRecord: Record<string, unknown> = isRecord(line.payload) ? line.payload : {}
+  const rawMessage = typeof payloadRecord.message === 'string' ? payloadRecord.message : ''
   const innerSummary = rawMessage.startsWith(`${CODEX_SUMMARY_PREFIX}\n`)
     ? rawMessage.slice(CODEX_SUMMARY_PREFIX.length + 1)
     : rawMessage

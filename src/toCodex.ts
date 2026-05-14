@@ -760,7 +760,7 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
   // that the user supplied non-text context, even when we cannot recreate
   // the exact multimodal payload natively.
   if (block.type === 'image') {
-    const sourceValue = (block as { source?: unknown }).source
+    const sourceValue = asRecord(block)?.source
     const sourceRecord = isRecord(sourceValue) ? sourceValue : null
     const source =
       sourceRecord && typeof sourceRecord.media_type === 'string'
@@ -769,9 +769,10 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
     return `[User attached image: ${source}]`
   }
   if (block.type === 'document') {
+    const blockRecord = asRecord(block)
     const title =
-      typeof (block as { title?: unknown }).title === 'string'
-        ? (block as { title?: string }).title
+      typeof blockRecord?.title === 'string'
+        ? blockRecord.title
         : 'document'
     return `[User attached document: ${title}]`
   }
@@ -851,21 +852,18 @@ function sanitizeCodexSourceForReplay(
   line: CodexRolloutLine,
 ): CodexRolloutLine | null {
   if (line.type === 'event_msg') {
-    const payload = line.payload as { type?: string }
+    const payload = asRecord(line.payload)
     if (
-      payload.type === 'thread_rolled_back' ||
-      payload.type === 'turn_aborted' ||
-      payload.type === 'context_compacted'
+      payload?.type === 'thread_rolled_back' ||
+      payload?.type === 'turn_aborted' ||
+      payload?.type === 'context_compacted'
     ) {
       return null
     }
   }
   if (line.type === 'compacted') {
-    const payload = line.payload as {
-      message?: string
-      replacement_history?: unknown
-    }
-    if (Array.isArray(payload.replacement_history)) {
+    const payload = asRecord(line.payload)
+    if (Array.isArray(payload?.replacement_history)) {
       // Preserve the boundary + summary, drop the snapshot. Codex's
       // reconstruction re-derives replacement content from the live
       // rollout instead of replaying the frozen one.
@@ -873,7 +871,7 @@ function sanitizeCodexSourceForReplay(
       return {
         ...line,
         payload: { ...rest, message: typeof payload.message === 'string' ? payload.message : '' },
-      } as CodexRolloutLine
+      }
     }
   }
   return line
@@ -1627,20 +1625,19 @@ function summarizeDiagnosticsAttachment(
   const files = Array.isArray(attachment.files) ? attachment.files : []
   const fileCount = files.length
   const diagnosticCount = files.reduce((count, file) => {
-    if (typeof file !== 'object' || file === null) return count
-    const diagnostics = (file as { diagnostics?: unknown }).diagnostics
+    const fileRecord = asRecord(file)
+    if (!fileRecord) return count
+    const diagnostics = fileRecord.diagnostics
     return count + (Array.isArray(diagnostics) ? diagnostics.length : 0)
   }, 0)
   const firstUri = files.find(
-    (file): file is { uri: string } =>
-      typeof file === 'object' &&
-      file !== null &&
-      typeof (file as { uri?: unknown }).uri === 'string',
-  )?.uri
+    file => typeof asRecord(file)?.uri === 'string',
+  )
+  const firstUriValue = asRecord(firstUri)?.uri
 
   if (fileCount === 0) return 'Received diagnostics.'
-  if (firstUri && fileCount === 1) {
-    return `Received ${diagnosticCount} diagnostic${diagnosticCount === 1 ? '' : 's'} for ${firstUri}.`
+  if (typeof firstUriValue === 'string' && fileCount === 1) {
+    return `Received ${diagnosticCount} diagnostic${diagnosticCount === 1 ? '' : 's'} for ${firstUriValue}.`
   }
   return `Received ${diagnosticCount} diagnostics across ${fileCount} files.`
 }
