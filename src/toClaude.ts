@@ -1480,7 +1480,7 @@ function mapCompacted(ctx: Ctx, line: CodexRolloutLine): ClaudeEntry[] {
     type: 'system',
     subtype: 'compact_boundary',
     content: 'Conversation compacted',
-    compactMetadata: line.payload as Record<string, unknown>,
+    compactMetadata: line.payload,
   })
 
   // Override parentUuid on the summary to point at the boundary — stamp()

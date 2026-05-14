@@ -28,6 +28,12 @@ const CLAUDE_DIR = join(here, '..', 'fixtures', 'claude')
 
 let failed = 0
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
 function check(label: string, ok: boolean, detail?: string): void {
   if (ok) console.log(`✓ ${label}`)
   else {
@@ -49,9 +55,10 @@ function stableStringify(value: unknown): string {
 
 function sortJson(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sortJson)
-  if (!value || typeof value !== 'object') return value
+  const record = asRecord(value)
+  if (!record) return value
   return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>)
+    Object.entries(record)
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([key, inner]) => [key, sortJson(inner)]),
   )
@@ -2031,7 +2038,7 @@ Refactored the foo module to extract bar helper.`,
       createdAt: 1,
       updatedAt: 1,
     },
-  } as unknown as CodexRolloutLine
+  } satisfies CodexRolloutLine
   const toClaudeOut = toClaude([ghostAsCodexLine])
   check('toClaude: defensively skips ghost-tagged input lines', toClaudeOut.length === 0)
 
