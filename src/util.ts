@@ -4,6 +4,22 @@
 
 import { createHash } from 'node:crypto'
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function asRecordArray(value: unknown): Record<string, unknown>[] {
+  if (!Array.isArray(value)) return []
+  const out: Record<string, unknown>[] = []
+  for (const item of value) {
+    const record = asRecord(item)
+    if (record) out.push(record)
+  }
+  return out
+}
+
 /**
  * Deterministic uuid-shaped string from a stable set of inputs.
  *
@@ -74,14 +90,12 @@ export function normalizeOutput(
     // through unchanged.
     if (raw.startsWith('{') && raw.endsWith('}')) {
       try {
-        const parsed = JSON.parse(raw) as { output?: unknown; metadata?: unknown }
-        if (typeof parsed.output === 'string') {
+        const parsed = asRecord(JSON.parse(raw))
+        if (typeof parsed?.output === 'string') {
           return {
             text: parsed.output,
             metadata:
-              typeof parsed.metadata === 'object' && parsed.metadata !== null
-                ? (parsed.metadata as Record<string, unknown>)
-                : undefined,
+              asRecord(parsed.metadata) ?? undefined,
           }
         }
       } catch {
@@ -94,11 +108,9 @@ export function normalizeOutput(
     const parts: string[] = []
     const richContent: Array<{ type: string; text?: string; [k: string]: unknown }> = []
     let metadata: Record<string, unknown> | undefined
-    for (const item of raw as Array<Record<string, unknown>>) {
+    for (const item of asRecordArray(raw)) {
       if (typeof item.text === 'string') parts.push(item.text)
-      if (item.metadata && typeof item.metadata === 'object') {
-        metadata = item.metadata as Record<string, unknown>
-      }
+      metadata = asRecord(item.metadata) ?? metadata
       // Claude accepts richer tool_result.content arrays than a plain
       // string: text, image, document, and search_result. Preserving
       // those here lets Codex structured tool outputs survive as native
@@ -118,7 +130,7 @@ export function normalizeOutput(
           item.type === 'document' ||
           item.type === 'search_result'
         ) {
-          richContent.push(item as { type: string; text?: string; [k: string]: unknown })
+          richContent.push({ ...item, type: item.type })
         }
       }
     }

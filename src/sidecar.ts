@@ -51,9 +51,10 @@ export function attachSidecar<T extends object>(
  *     `source`, but MUST carry `turnId`, `blockIndex`, `createdAt`,
  *     and `updatedAt`. See `./ghost.ts` and `docs/ghost.md`.
  */
-export function readSidecar<T extends WithAtp<object>>(
-  record: T,
-): AtpSidecar | null {
+export function readSidecar(record: unknown): AtpSidecar | null
+export function readSidecar<T extends WithAtp<object>>(record: T): AtpSidecar | null
+export function readSidecar(record: unknown): AtpSidecar | null {
+  if (!record || typeof record !== 'object') return null
   const raw = (record as Record<string, unknown>)[ATP_KEY]
   if (!raw || typeof raw !== 'object') return null
   const s = raw as AtpSidecar
@@ -89,9 +90,9 @@ export function readSidecar<T extends WithAtp<object>>(
  * narrowed return type so TypeScript understands `record._atp` is an
  * {@link AtpGhostSidecar} inside the guarded branch.
  */
-export function isGhost<T extends WithAtp<object>>(
-  record: T,
-): record is T & GhostEntry {
+export function isGhost(record: unknown): record is GhostEntry
+export function isGhost<T extends WithAtp<object>>(record: T): record is T & GhostEntry
+export function isGhost(record: unknown): record is GhostEntry {
   return readSidecar(record)?.origin === 'ghost'
 }
 
@@ -100,9 +101,9 @@ export function isGhost<T extends WithAtp<object>>(
  * ghost, otherwise null. Saves one `as` cast at every call site that
  * wants to read ghost-specific fields.
  */
-export function ghostSidecar<T extends WithAtp<object>>(
-  record: T,
-): AtpGhostSidecar | null {
+export function ghostSidecar(record: unknown): AtpGhostSidecar | null
+export function ghostSidecar<T extends WithAtp<object>>(record: T): AtpGhostSidecar | null
+export function ghostSidecar(record: unknown): AtpGhostSidecar | null {
   const s = readSidecar(record)
   return s?.origin === 'ghost' ? s : null
 }

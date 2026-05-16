@@ -398,11 +398,11 @@ export type MergeOptions = {
  * ghosts append after the upstream tail, ordered by `updatedAt` and
  * then by (turnId, blockIndex) as a tie-breaker.
  */
-export function mergeWithUpstream(
-  upstream: readonly ClaudeEntry[],
+export function mergeWithUpstream<T extends { uuid?: string } = ClaudeEntry>(
+  upstream: readonly T[],
   ghosts: ReadonlyMap<string, GhostEntry>,
   opts: MergeOptions = {},
-): ClaudeEntry[] {
+): Array<T | GhostEntry> {
   const keepSuperseded = opts.keepSupersededGhosts === true
   const trustSuperseded = opts.trustSupersededFlag === true && !keepSuperseded
   const dropOrphaned = opts.dropOrphanedGhosts === true

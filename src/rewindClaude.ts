@@ -107,6 +107,12 @@ export type RewindClaudeResult = {
 
 const DEFAULT_TITLE_SUFFIX = ' (rewound)'
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
 export class RewindClaudeAnchorNotFoundError extends Error {
   constructor(anchor: RewindClaudeAnchor) {
     super(
@@ -237,9 +243,10 @@ export function rewindClaudeTranscript(
 
     // Assistant entries: strip orphan tool_use blocks. If stripping
     // empties the content array, skip the entry entirely.
-    if (entry.type === 'assistant' && Array.isArray(entry.message?.content)) {
+    const assistantContent = entry.message?.content
+    if (entry.type === 'assistant' && Array.isArray(assistantContent)) {
       const cleaned = filterOrphanToolUses(
-        entry.message!.content as ClaudeContentBlock[],
+        assistantContent,
         resolvedToolUseIds,
       )
       if (cleaned === null) {
@@ -324,13 +331,13 @@ function filterOrphanToolUses(
 function isToolUseBlock(
   block: ClaudeContentBlock,
 ): block is ClaudeContentBlock & { type: 'tool_use'; id?: string } {
-  return (block as { type?: string }).type === 'tool_use'
+  return block.type === 'tool_use'
 }
 
 function isToolResultBlock(
   block: ClaudeContentBlock,
 ): block is ClaudeContentBlock & { type: 'tool_result'; tool_use_id?: string } {
-  return (block as { type?: string }).type === 'tool_result'
+  return block.type === 'tool_result'
 }
 
 function hasAdjacentCompactSummary(
@@ -387,22 +394,21 @@ function extractAnchorPrompt(entry: ClaudeEntry | undefined): AnchorPrompt {
   const textParts: string[] = []
   const images: RewindClaudeImageBlock[] = []
   for (const block of content) {
-    const type = (block as { type?: string }).type
+    const record = asRecord(block)
+    if (!record) continue
+    const type = record?.type
     if (type === 'text') {
-      const text = (block as { text?: unknown }).text
+      const text = record.text
       if (typeof text === 'string') textParts.push(text)
       continue
     }
     if (type === 'image') {
-      const source = (block as { source?: unknown }).source
-      if (source && typeof source === 'object') {
-        const rec = source as Record<string, unknown>
-        if (rec.type === 'base64') {
-          const mediaType =
-            typeof rec.media_type === 'string' ? rec.media_type : 'image/png'
-          const data = typeof rec.data === 'string' ? rec.data : null
-          if (data) images.push({ mediaType, data })
-        }
+      const source = asRecord(record.source)
+      if (source?.type === 'base64') {
+        const mediaType =
+          typeof source.media_type === 'string' ? source.media_type : 'image/png'
+        const data = typeof source.data === 'string' ? source.data : null
+        if (data) images.push({ mediaType, data })
       }
     }
   }

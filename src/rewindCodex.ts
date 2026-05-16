@@ -108,6 +108,12 @@ const MUTATING_EVENT_MSG_TYPES = new Set([
   'context_compacted',
 ])
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
 export function rewindCodexRollout(
   source: readonly CodexRolloutLine[],
   anchor: RewindCodexAnchor,
@@ -137,7 +143,8 @@ export function rewindCodexRollout(
   let anchorLineIndex = -1
   let promptText = ''
   for (let i = 0; i < source.length; i++) {
-    const line = source[i]!
+    const line = source[i]
+    if (!line) continue
     if (!isUserMessageLine(line)) continue
     if (userMessageCount === anchor.userMessageIndex) {
       anchorLineIndex = i
@@ -150,7 +157,8 @@ export function rewindCodexRollout(
     // Count the rest for a better error message.
     let total = userMessageCount
     for (let i = 0; i < source.length; i++) {
-      if (isUserMessageLine(source[i]!)) total++
+      const line = source[i]
+      if (line && isUserMessageLine(line)) total++
     }
     throw new RewindCodexAnchorNotFoundError(anchor, total)
   }
@@ -201,7 +209,8 @@ export function rewindCodexRollout(
   // ---------------------------------------------------------------------
   const lines: CodexRolloutLine[] = []
   for (let i = 0; i < retained.length; i++) {
-    const line = retained[i]!
+    const line = retained[i]
+    if (!line) continue
 
     if (line.type === 'session_meta') {
       lines.push(rewriteSessionMeta(line, newSessionId, newTimestamp))
@@ -209,15 +218,16 @@ export function rewindCodexRollout(
     }
 
     if (line.type === 'event_msg') {
-      const evType = (line.payload as { type?: string }).type
+      const evType = asRecord(line.payload)?.type
       if (typeof evType === 'string' && MUTATING_EVENT_MSG_TYPES.has(evType)) {
         continue
       }
     }
 
     if (line.type === 'response_item') {
-      const payload = line.payload as { type?: string; call_id?: string }
+      const payload = asRecord(line.payload)
       if (
+        payload &&
         (payload.type === 'function_call' ||
           payload.type === 'custom_tool_call' ||
           payload.type === 'local_shell_call') &&
@@ -234,10 +244,11 @@ export function rewindCodexRollout(
   // Drop trailing reasoning items (walk backwards, stop at first
   // non-reasoning response_item or any event_msg/turn_context).
   while (lines.length > 0) {
-    const last = lines[lines.length - 1]!
+    const last = lines.at(-1)
+    if (!last) break
     if (last.type === 'response_item') {
-      const payload = last.payload as { type?: string }
-      if (payload.type === 'reasoning') {
+      const payload = asRecord(last.payload)
+      if (payload?.type === 'reasoning') {
         lines.pop()
         continue
       }
@@ -260,22 +271,19 @@ export function rewindCodexRollout(
 
 function isUserMessageLine(line: CodexRolloutLine): boolean {
   if (line.type !== 'response_item') return false
-  const payload = line.payload as { type?: string; role?: string }
-  return payload.type === 'message' && payload.role === 'user'
+  const payload = asRecord(line.payload)
+  return payload?.type === 'message' && payload.role === 'user'
 }
 
 function extractUserPromptText(line: CodexRolloutLine): string {
-  const payload = line.payload as {
-    type?: string
-    content?: Array<{ type?: string; text?: string }>
-  }
-  if (payload.type !== 'message') return ''
+  const payload = asRecord(line.payload)
+  if (payload?.type !== 'message') return ''
   if (!Array.isArray(payload.content)) return ''
   const parts: string[] = []
   for (const block of payload.content) {
-    if (!block || typeof block !== 'object') continue
-    if (block.type === 'input_text' && typeof block.text === 'string') {
-      parts.push(block.text)
+    const record = asRecord(block)
+    if (record?.type === 'input_text' && typeof record.text === 'string') {
+      parts.push(record.text)
     }
   }
   return parts.join('\n')
@@ -303,8 +311,9 @@ function collectResolvedCallIds(
   const resolved = new Set<string>()
   for (const line of retained) {
     if (line.type !== 'response_item') continue
-    const payload = line.payload as { type?: string; call_id?: string }
+    const payload = asRecord(line.payload)
     if (
+      payload &&
       (payload.type === 'function_call_output' ||
         payload.type === 'custom_tool_call_output' ||
         payload.type === 'tool_search_output') &&

@@ -28,6 +28,33 @@ import type {
 
 export type { ConvertOptions } from './toClaude.js'
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringField(record: Record<string, unknown> | null | undefined, key: string): string | undefined {
+  const value = record?.[key]
+  return typeof value === 'string' ? value : undefined
+}
+
+function isClaudeTextBlock(block: ClaudeContentBlock): block is Extract<ClaudeContentBlock, { type: 'text' }> {
+  return block.type === 'text' && typeof block.text === 'string'
+}
+
+function isClaudeToolResultBlock(block: ClaudeContentBlock): block is ClaudeToolResultBlock {
+  return block.type === 'tool_result' && typeof block.tool_use_id === 'string'
+}
+
+function isClaudeToolUseBlock(block: ClaudeContentBlock): block is ClaudeToolUseBlock {
+  return block.type === 'tool_use' && typeof block.id === 'string'
+}
+
+function isClaudeThinkingBlock(block: ClaudeContentBlock): block is ClaudeThinkingBlock {
+  return block.type === 'thinking' && typeof block.thinking === 'string'
+}
+
 export function toCodex(
   entries: readonly ClaudeEntry[],
   opts: ConvertOptions = {},
@@ -358,9 +385,7 @@ function userEntryHasText(entry: ClaudeEntry): boolean {
   if (typeof content === 'string') return content.trim().length > 0
   if (!Array.isArray(content)) return false
   return content.some(
-    b => (b as { type?: string }).type === 'text' &&
-      typeof (b as { text?: string }).text === 'string' &&
-      (b as { text: string }).text.trim().length > 0,
+    b => isClaudeTextBlock(b) && b.text.trim().length > 0,
   )
 }
 
@@ -595,13 +620,8 @@ function extractClaudeSummaryText(entry: ClaudeEntry): string {
   } else if (Array.isArray(content)) {
     const parts: string[] = []
     for (const block of content) {
-      if (
-        block &&
-        typeof block === 'object' &&
-        (block as { type?: string }).type === 'text' &&
-        typeof (block as { text?: string }).text === 'string'
-      ) {
-        parts.push((block as { text: string }).text)
+      if (isClaudeTextBlock(block)) {
+        parts.push(block.text)
       }
     }
     raw = parts.join('\n\n')
@@ -646,12 +666,12 @@ function mapUserEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   const textItems: CodexContentItem[] = []
   const textParts: string[] = []
   for (const block of blocks) {
-    if (block.type === 'text') {
-      const text = (block as { text: string }).text
+    if (isClaudeTextBlock(block)) {
+      const text = block.text
       textItems.push({ type: 'input_text', text })
       textParts.push(text)
-    } else if (block.type === 'tool_result') {
-      lines.push(emitToolResult(entry, block as ClaudeToolResultBlock))
+    } else if (isClaudeToolResultBlock(block)) {
+      lines.push(emitToolResult(entry, block))
     } else {
       const fallback = summarizeNonTextUserBlock(block)
       if (!fallback) continue
@@ -695,7 +715,7 @@ function emitToolResult(
   entry: ClaudeEntry,
   block: ClaudeToolResultBlock,
 ): CodexRolloutLine {
-  const kind = (block.codex?.kind as string | undefined) ?? 'function_call_output'
+  const kind = stringField(block.codex, 'kind') ?? 'function_call_output'
   const content = stringifyToolResultContent(block.content)
 
   if (kind === 'custom_tool_call_output') {
@@ -713,7 +733,9 @@ function emitToolResult(
       payload: {
         type: 'custom_tool_call_output',
         call_id: block.tool_use_id,
-        ...(block.codex?.name ? { name: block.codex.name as string } : {}),
+        ...(stringField(block.codex, 'name')
+          ? { name: stringField(block.codex, 'name') }
+          : {}),
         output: content,
       },
     }
@@ -738,7 +760,7 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
   // that the user supplied non-text context, even when we cannot recreate
   // the exact multimodal payload natively.
   if (block.type === 'image') {
-    const sourceValue = (block as { source?: unknown }).source
+    const sourceValue = asRecord(block)?.source
     const sourceRecord = isRecord(sourceValue) ? sourceValue : null
     const source =
       sourceRecord && typeof sourceRecord.media_type === 'string'
@@ -747,9 +769,10 @@ function summarizeNonTextUserBlock(block: ClaudeContentBlock): string | null {
     return `[User attached image: ${source}]`
   }
   if (block.type === 'document') {
+    const blockRecord = asRecord(block)
     const title =
-      typeof (block as { title?: unknown }).title === 'string'
-        ? (block as { title?: string }).title
+      typeof blockRecord?.title === 'string'
+        ? blockRecord.title
         : 'document'
     return `[User attached document: ${title}]`
   }
@@ -829,21 +852,18 @@ function sanitizeCodexSourceForReplay(
   line: CodexRolloutLine,
 ): CodexRolloutLine | null {
   if (line.type === 'event_msg') {
-    const payload = line.payload as { type?: string }
+    const payload = asRecord(line.payload)
     if (
-      payload.type === 'thread_rolled_back' ||
-      payload.type === 'turn_aborted' ||
-      payload.type === 'context_compacted'
+      payload?.type === 'thread_rolled_back' ||
+      payload?.type === 'turn_aborted' ||
+      payload?.type === 'context_compacted'
     ) {
       return null
     }
   }
   if (line.type === 'compacted') {
-    const payload = line.payload as {
-      message?: string
-      replacement_history?: unknown
-    }
-    if (Array.isArray(payload.replacement_history)) {
+    const payload = asRecord(line.payload)
+    if (Array.isArray(payload?.replacement_history)) {
       // Preserve the boundary + summary, drop the snapshot. Codex's
       // reconstruction re-derives replacement content from the live
       // rollout instead of replaying the frozen one.
@@ -851,7 +871,7 @@ function sanitizeCodexSourceForReplay(
       return {
         ...line,
         payload: { ...rest, message: typeof payload.message === 'string' ? payload.message : '' },
-      } as CodexRolloutLine
+      }
     }
   }
   return line
@@ -1312,14 +1332,14 @@ function mapAssistantEntry(entry: ClaudeEntry): CodexRolloutLine[] {
   const textItems: CodexContentItem[] = []
   const textParts: string[] = []
   for (const block of blocks) {
-    if (block.type === 'text') {
-      const text = (block as { text: string }).text
+    if (isClaudeTextBlock(block)) {
+      const text = block.text
       textItems.push({ type: 'output_text', text })
       textParts.push(text)
-    } else if (block.type === 'tool_use') {
-      lines.push(emitToolUse(entry, block as ClaudeToolUseBlock))
-    } else if (block.type === 'thinking') {
-      lines.push(emitReasoning(entry, block as ClaudeThinkingBlock))
+    } else if (isClaudeToolUseBlock(block)) {
+      lines.push(emitToolUse(entry, block))
+    } else if (isClaudeThinkingBlock(block)) {
+      lines.push(emitReasoning(entry, block))
     }
   }
 
@@ -1374,8 +1394,10 @@ function emitToolUse(
     }
   }
 
-  const kind = (block.codex?.kind as string | undefined) ?? 'function_call'
+  const kind = stringField(block.codex, 'kind') ?? 'function_call'
   const argsJson = JSON.stringify(block.input)
+  const status = stringField(block.codex, 'status')
+  const namespace = stringField(block.codex, 'namespace')
 
   if (kind === 'custom_tool_call') {
     return {
@@ -1386,7 +1408,7 @@ function emitToolUse(
         call_id: block.id,
         name: block.name,
         input: argsJson,
-        ...(block.codex?.status ? { status: block.codex.status as string } : {}),
+        ...(status ? { status } : {}),
       },
     }
   }
@@ -1397,9 +1419,7 @@ function emitToolUse(
     payload: {
       type: 'function_call',
       name: block.name,
-      ...(block.codex?.namespace
-        ? { namespace: block.codex.namespace as string }
-        : {}),
+      ...(namespace ? { namespace } : {}),
       arguments: argsJson,
       call_id: block.id,
     },
@@ -1441,14 +1461,14 @@ function toLocalShellPayload(
   // fresh ~/.codex/sessions/.../rollout-*.jsonl). So plain Claude Bash
   // should fall through to the generic function_call emission path,
   // which produces a transcript-safe item OpenAI won't strict-validate.
-  const kind = block.codex?.kind as string | undefined
+  const kind = stringField(block.codex, 'kind')
   if (kind !== 'local_shell_call') return null
-  if (typeof block.input !== 'object' || block.input === null) return null
+  const input = asRecord(block.input)
+  if (!input) return null
 
   const command = extractBashCommand(block.input)
   if (!command) return null
 
-  const input = block.input as Record<string, unknown>
   const workingDirectory =
     typeof input.workdir === 'string'
       ? input.workdir
@@ -1459,7 +1479,7 @@ function toLocalShellPayload(
   return {
     type: 'local_shell_call',
     call_id: block.id,
-    status: typeof block.codex?.status === 'string' ? block.codex.status : 'completed',
+    status: stringField(block.codex, 'status') ?? 'completed',
     action: {
       type: 'exec',
       command: [command],
@@ -1479,8 +1499,8 @@ function toLocalShellPayload(
 }
 
 function extractBashCommand(input: unknown): string | null {
-  if (typeof input !== 'object' || input === null) return null
-  const record = input as Record<string, unknown>
+  const record = asRecord(input)
+  if (!record) return null
   if (typeof record.command === 'string' && record.command.trim().length > 0) {
     return record.command
   }
@@ -1494,8 +1514,8 @@ function emitReasoning(
   entry: ClaudeEntry,
   block: ClaudeThinkingBlock,
 ): CodexRolloutLine {
-  const id = block.codex?.id as string | undefined
-  const encrypted = block.codex?.encrypted_content as string | undefined
+  const id = stringField(block.codex, 'id')
+  const encrypted = stringField(block.codex, 'encrypted_content')
   return {
     timestamp: entry.timestamp,
     type: 'response_item',
@@ -1605,20 +1625,19 @@ function summarizeDiagnosticsAttachment(
   const files = Array.isArray(attachment.files) ? attachment.files : []
   const fileCount = files.length
   const diagnosticCount = files.reduce((count, file) => {
-    if (typeof file !== 'object' || file === null) return count
-    const diagnostics = (file as { diagnostics?: unknown }).diagnostics
+    const fileRecord = asRecord(file)
+    if (!fileRecord) return count
+    const diagnostics = fileRecord.diagnostics
     return count + (Array.isArray(diagnostics) ? diagnostics.length : 0)
   }, 0)
   const firstUri = files.find(
-    (file): file is { uri: string } =>
-      typeof file === 'object' &&
-      file !== null &&
-      typeof (file as { uri?: unknown }).uri === 'string',
-  )?.uri
+    file => typeof asRecord(file)?.uri === 'string',
+  )
+  const firstUriValue = asRecord(firstUri)?.uri
 
   if (fileCount === 0) return 'Received diagnostics.'
-  if (firstUri && fileCount === 1) {
-    return `Received ${diagnosticCount} diagnostic${diagnosticCount === 1 ? '' : 's'} for ${firstUri}.`
+  if (typeof firstUriValue === 'string' && fileCount === 1) {
+    return `Received ${diagnosticCount} diagnostic${diagnosticCount === 1 ? '' : 's'} for ${firstUriValue}.`
   }
   return `Received ${diagnosticCount} diagnostics across ${fileCount} files.`
 }
@@ -1736,10 +1755,7 @@ function summarizeHookAttachment(
     case 'hook_blocking_error': {
       const hookName =
         typeof attachment.hookName === 'string' ? attachment.hookName : 'Hook'
-      const blockingError =
-        typeof attachment.blockingError === 'object' && attachment.blockingError !== null
-          ? (attachment.blockingError as Record<string, unknown>)
-          : {}
+      const blockingError = asRecord(attachment.blockingError) ?? {}
       const command =
         typeof blockingError.command === 'string' ? blockingError.command : 'unknown command'
       const error =
