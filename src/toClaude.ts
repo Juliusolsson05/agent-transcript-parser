@@ -56,7 +56,7 @@ export type ConvertOptions = {
    *
    * The default is OFF because round-trip fidelity tests expect
    * byte-identical output when the same transcript passes through both
-   * converters. Provider-switch in Agent Code turns it ON because those
+   * converters. Provider-switch callers turn it ON because those
    * entries are Claude-local housekeeping that must not leak into a
    * Codex rollout the user just pivoted to.
    *
@@ -78,7 +78,7 @@ export type ConvertOptions = {
    *     behavior when the snapshot is stale)
    *
    * The default is OFF to preserve byte-identical round-trip fidelity
-   * for backup/export use cases. Agent Code's provider-switch turns it ON
+   * for backup/export use cases. Provider-switch callers turn it ON
    * because the output file is about to be RESUMED by codex, and
    * preserving those mutations would re-apply them on resume (dropping
    * user-visible turns the source session already committed).

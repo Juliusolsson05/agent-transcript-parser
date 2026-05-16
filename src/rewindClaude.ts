@@ -9,8 +9,8 @@
 //
 // The caller supplies the anchor as the Claude-native user entry
 // `uuid`. The prompt text is intentionally NOT written into the
-// truncated transcript — Agent Code hands it back to the renderer as a
-// `draftInput` so the user can edit/re-send or just rewrite from
+// truncated transcript — the caller hands it back to the renderer as
+// a `draftInput` so the user can edit/re-send or just rewrite from
 // scratch. The feature is "continue from here with an unsent draft",
 // not "replay this prompt automatically".
 //
@@ -33,9 +33,9 @@
 //      the dropped side; cloning never splits pairs.
 //
 // This file owns the transcript-shape rules. Filesystem IO and
-// session-file naming live in `src/main/providerSwitch/rewindSession.ts`
-// in Agent Code so the parser package stays browser-buildable and
-// free of Node fs imports, matching the layering of `cloneClaude.ts`.
+// session-file naming live in the host app so the parser package
+// stays browser-buildable and free of Node fs imports, matching the
+// layering of `cloneClaude.ts`.
 
 import { randomUUID } from 'node:crypto'
 
@@ -77,8 +77,8 @@ export type RewindClaudeResult = {
    *  Extraction mirrors claude-code-src/utils/messages.ts
    *  `textForResubmit`:
    *    1. If the text contains a `<bash-input>` tag, the unwrapped
-   *       body is returned as-is (renderer prefills bash mode, which
-   *       for Agent Code means prefixing `!` on the draft).
+   *       body is returned as-is (renderers may prefill bash mode,
+   *       e.g. by prefixing `!` on the draft).
    *    2. If it contains a `<command-name>` tag, the return shape is
    *       `<cmd> <args>` so the renderer can populate a slash-command
    *       invocation.
@@ -91,9 +91,9 @@ export type RewindClaudeResult = {
   promptText: string
   /** The `mode` Claude Code's composer would use for the prefill. See
    *  claude-code-src/utils/messages.ts — `'bash'` when the anchor was
-   *  a bash-input prompt, otherwise `'prompt'`. Agent Code's composer
-   *  does not have a discrete bash mode today, but exposing the hint
-   *  lets the caller prefix `!` (or open a bash submode) if desired. */
+   *  a bash-input prompt, otherwise `'prompt'`. Hosts that don't have
+   *  a discrete bash mode can use the hint to prefix `!` on the
+   *  drafted text (or open a bash submode if they have one). */
   promptMode: 'prompt' | 'bash'
   /** Image blocks pulled from the anchored user entry. Order matches
    *  the anchor's content-block order. Empty when the anchor had no
