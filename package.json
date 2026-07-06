@@ -20,7 +20,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "verify": "tsx testing/verify.ts"
+    "verify": "tsx testing/verify.ts",
+    "verify:neutral-round-trip": "tsx testing/round-trip-identity.ts"
   },
   "devDependencies": {
     "ajv": "^8.18.0",
