@@ -10,6 +10,7 @@ import type {
   Codec,
   CodecEmitResult,
   EncodeOptions,
+  NeutralContentBlock,
   NeutralEntry,
   NeutralHeader,
   NeutralIdentity,
@@ -47,8 +48,11 @@ function decode(source: CodexRolloutLine[]): NeutralTranscript {
       emissionOrder: [idx],
     }
 
-    // Coarse kind mapping — the same "grow later" note applies here as
-    // in the Claude codec.
+    // Semantic mapping, slice 1 (#5). Codex ships tool calls and
+    // results as SEPARATE rollout lines (unlike Claude's in-message
+    // blocks), so they become standalone toolCall/toolResult entries.
+    // Everything unmapped stays providerOpaque; passthrough remains
+    // the encode source, so classification only improves.
     if (raw.type === 'session_meta') {
       return {
         kind: 'sessionMeta',
@@ -56,31 +60,169 @@ function decode(source: CodexRolloutLine[]): NeutralTranscript {
         raw: { ...passthrough },
       }
     }
+    if (raw.type === 'turn_context' && isRecord(raw.payload)) {
+      const p = raw.payload as Record<string, unknown>
+      return {
+        kind: 'turnBoundary',
+        ...identity,
+        boundary: {
+          turnId: typeof p.turn_id === 'string' ? p.turn_id : identity.id,
+          startedAt: raw.timestamp ?? null,
+          context: {
+            ...(typeof p.cwd === 'string' ? { cwd: p.cwd } : {}),
+            ...(typeof p.current_date === 'string' ? { currentDate: p.current_date } : {}),
+            ...(typeof p.approval_policy === 'string'
+              ? { approvalPolicy: p.approval_policy }
+              : {}),
+            ...(p.sandbox_policy !== undefined ? { sandboxPolicy: p.sandbox_policy } : {}),
+            ...(typeof p.model === 'string' ? { model: p.model } : {}),
+            ...(typeof p.personality === 'string' ? { personality: p.personality } : {}),
+            ...(typeof p.summary === 'string' ? { summary: p.summary } : {}),
+          },
+        },
+        raw: { ...passthrough },
+      }
+    }
     if (raw.type === 'response_item' && isRecord(raw.payload)) {
-      const payload = raw.payload
-      if (payload.type === 'message' && payload.role === 'user') {
-        return {
-          kind: 'userMessage',
+      const payload = raw.payload as Record<string, unknown>
+      if (payload.type === 'message' && typeof payload.role === 'string') {
+        const content = mapCodexMessageContent(payload)
+        const base = {
           ...identity,
-          content: [],
+          content,
+          raw: { ...passthrough },
+          ...(typeof payload.phase === 'string' ? { phase: payload.phase } : {}),
+        }
+        if (payload.role === 'user') return { kind: 'userMessage', ...base }
+        if (payload.role === 'assistant') return { kind: 'assistantMessage', ...base }
+        // developer/system roles: semantically context injections;
+        // keep opaque until a later slice maps them deliberately.
+      }
+      if (payload.type === 'function_call' || payload.type === 'custom_tool_call') {
+        const rawArgs =
+          typeof payload.arguments === 'string'
+            ? payload.arguments
+            : typeof payload.input === 'string'
+              ? payload.input
+              : undefined
+        return {
+          kind: 'toolCall',
+          ...identity,
+          block: {
+            kind: 'toolUse',
+            callId: typeof payload.call_id === 'string' ? payload.call_id : identity.id,
+            toolName: typeof payload.name === 'string' ? payload.name : 'unknown',
+            providerKind: payload.type,
+            // Codex stores arguments as a JSON STRING that can be
+            // parse-invalid — keep the wire bytes; parse best-effort.
+            input: safeParseJson(rawArgs),
+            ...(rawArgs !== undefined ? { rawArgumentsString: rawArgs } : {}),
+            ...(typeof payload.namespace === 'string' ? { namespace: payload.namespace } : {}),
+            ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
+          },
           raw: { ...passthrough },
         }
       }
-      if (payload.type === 'message' && payload.role === 'assistant') {
+      if (payload.type === 'local_shell_call') {
+        const action = isRecord(payload.action) ? (payload.action as Record<string, unknown>) : {}
+        const command = Array.isArray(action.command)
+          ? action.command
+          : Array.isArray(action.cmd)
+            ? action.cmd
+            : undefined
         return {
-          kind: 'assistantMessage',
+          kind: 'toolCall',
           ...identity,
-          content: [],
+          block: {
+            kind: 'toolUse',
+            callId: typeof payload.call_id === 'string' ? payload.call_id : identity.id,
+            toolName: 'local_shell',
+            providerKind: 'local_shell_call',
+            input: { command },
+            ...(typeof action.working_directory === 'string'
+              ? { workdir: action.working_directory }
+              : typeof action.workdir === 'string'
+                ? { workdir: action.workdir }
+                : {}),
+            ...(typeof payload.status === 'string' ? { status: payload.status } : {}),
+          },
+          raw: { ...passthrough },
+        }
+      }
+      if (
+        payload.type === 'function_call_output' ||
+        payload.type === 'custom_tool_call_output'
+      ) {
+        const output = payload.output
+        const items = Array.isArray(output) ? (output as Array<Record<string, unknown>>) : null
+        const firstMeta = items?.find(i => isRecord(i.metadata))?.metadata as
+          | Record<string, unknown>
+          | undefined
+        return {
+          kind: 'toolResult',
+          ...identity,
+          block: {
+            kind: 'toolResult',
+            callId: typeof payload.call_id === 'string' ? payload.call_id : identity.id,
+            content:
+              typeof output === 'string' && output.length > 0
+                ? [{ kind: 'text', text: output }]
+                : (items ?? [])
+                    .filter(i => typeof i.text === 'string')
+                    .map(i => ({ kind: 'text' as const, text: i.text as string })),
+            ...(typeof firstMeta?.exit_code === 'number'
+              ? { exitCode: firstMeta.exit_code, isError: firstMeta.exit_code !== 0 }
+              : {}),
+            ...(typeof firstMeta?.duration_seconds === 'number'
+              ? { durationSeconds: firstMeta.duration_seconds }
+              : {}),
+            rawOutput: (output ?? '') as string | Array<Record<string, unknown>>,
+          },
+          raw: { ...passthrough },
+        }
+      }
+      if (payload.type === 'reasoning') {
+        const summary = Array.isArray(payload.summary)
+          ? (payload.summary as Array<Record<string, unknown>>)
+          : []
+        return {
+          kind: 'reasoning',
+          ...identity,
+          block: {
+            kind: 'thinking',
+            text: summary
+              .map(s => (typeof s.text === 'string' ? s.text : ''))
+              .filter(Boolean)
+              .join('\n'),
+            ...(typeof payload.id === 'string' ? { reasoningId: payload.id } : {}),
+            ...(typeof payload.encrypted_content === 'string'
+              ? { encryptedContent: payload.encrypted_content }
+              : {}),
+            ...(payload.content !== undefined ? { rawContent: payload.content } : {}),
+            summaryItems: summary,
+          },
           raw: { ...passthrough },
         }
       }
     }
     if (raw.type === 'event_msg' && isRecord(raw.payload)) {
+      const payload = raw.payload as Record<string, unknown>
+      if (
+        payload.type === 'thread_name_updated' &&
+        typeof payload.thread_name === 'string'
+      ) {
+        return {
+          kind: 'titleChange',
+          ...identity,
+          title: payload.thread_name,
+          raw: { ...passthrough },
+        }
+      }
       return {
         kind: 'lifecycleEvent',
         ...identity,
-        eventType: String(raw.payload.type ?? 'unknown'),
-        payload: raw.payload,
+        eventType: String(payload.type ?? 'unknown'),
+        payload,
         raw: { ...passthrough },
       }
     }
@@ -229,6 +371,39 @@ function sniff(firstRecord: unknown): boolean {
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/** Map a Codex message payload's content items to neutral blocks.
+ *  input_text/output_text → text; refusal → refusal. Annotations on
+ *  output_text ride the passthrough (no neutral field yet). */
+function mapCodexMessageContent(payload: Record<string, unknown>): NeutralContentBlock[] {
+  const content = payload.content
+  if (!Array.isArray(content)) return []
+  const blocks: NeutralContentBlock[] = []
+  for (const item of content as Array<Record<string, unknown>>) {
+    if (
+      (item.type === 'input_text' || item.type === 'output_text') &&
+      typeof item.text === 'string'
+    ) {
+      blocks.push({ kind: 'text', text: item.text })
+    } else if (item.type === 'refusal' && typeof item.refusal === 'string') {
+      blocks.push({ kind: 'refusal', text: item.refusal })
+    }
+  }
+  return blocks
+}
+
+/** Codex `arguments` is a JSON string that can be parse-invalid;
+ *  parse best-effort and fall back to the raw string as the input so
+ *  semantic consumers always see SOMETHING while `rawArgumentsString`
+ *  keeps the authoritative bytes. */
+function safeParseJson(input: string | undefined): unknown {
+  if (input === undefined) return undefined
+  try {
+    return JSON.parse(input)
+  } catch {
+    return input
+  }
 }
 
 function isSessionMetaPayload(v: unknown): v is CodexSessionMetaPayload {
