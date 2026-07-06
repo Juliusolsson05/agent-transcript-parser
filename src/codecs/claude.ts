@@ -30,6 +30,7 @@ import type {
   NeutralUsage,
 } from '../neutral/types.js'
 import { EMPTY_REPORT } from '../neutral/types.js'
+import { translateToClaude } from '../neutral/translate.js'
 
 const CLAUDE_ID = 'claude' as const
 
@@ -147,26 +148,29 @@ function decode(source: ClaudeEntry[]): NeutralTranscript {
 }
 
 /**
- * Encode a NeutralTranscript back to a Claude JSONL stream.
+ * Encode a NeutralTranscript to a Claude JSONL stream.
  *
- * Same-provider identity path: for each neutral entry whose
- * passthrough came from Claude, re-emit the passthrough records
- * verbatim in their recorded emissionOrder. This makes
- * `encode(claude, decode(claude, x))` yield the same lines in the
- * same order as `x` — the round-trip identity guarantee this PR
- * exists to establish.
+ * Same-provider path: re-emit passthrough records verbatim in entry
+ * order — the round-trip identity guarantee (8/8 fixture suite).
  *
- * Cross-provider path: not implemented in this skeleton — the entries
- * that came from Codex have no Claude representation yet. That work
- * lives in follow-up PRs (see the file header).
+ * Cross-provider path (#5 slice 2): route through the translate seam,
+ * which reconstructs the source stream from passthrough and runs the
+ * battle-tested legacy engine (toClaude). Equivalence with the direct
+ * pairwise call is proven by testing/translate-equivalence.ts; the
+ * engine migrates to per-entry neutral translation in later slices
+ * behind this same signature.
  */
 function encode(
   neutral: NeutralTranscript,
   _options: EncodeOptions = {},
 ): CodecEmitResult<ClaudeEntry> {
+  const foreign = neutral.entries.some(e => e.raw.provider !== CLAUDE_ID)
+  if (foreign) {
+    const { lines, report } = translateToClaude(neutral)
+    return { lines, report }
+  }
   const lines: ClaudeEntry[] = []
   for (const entry of neutral.entries) {
-    if (entry.raw.provider !== CLAUDE_ID) continue
     for (const rec of entry.raw.records) {
       lines.push(rec as ClaudeEntry)
     }

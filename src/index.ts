@@ -73,6 +73,12 @@ export type {
 export { ClaudeCodec } from './codecs/claude.js'
 export { CodexCodec } from './codecs/codex.js'
 export { getCodec, sniffCodec } from './codecs/registry.js'
+export {
+  reconstructSource,
+  translateToClaude,
+  translateToCodex,
+} from './neutral/translate.js'
+export type { TranslateResult } from './neutral/translate.js'
 export type {
   AgentProviderId,
   Codec,
