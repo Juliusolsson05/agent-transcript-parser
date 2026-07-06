@@ -22,7 +22,8 @@
     "build": "tsc",
     "verify": "tsx testing/verify.ts",
     "verify:neutral-round-trip": "tsx testing/round-trip-identity.ts",
-    "verify:neutral-semantics": "tsx testing/semantic-assertions.ts"
+    "verify:neutral-semantics": "tsx testing/semantic-assertions.ts",
+    "verify:neutral-translate": "tsx testing/translate-equivalence.ts"
   },
   "devDependencies": {
     "ajv": "^8.18.0",

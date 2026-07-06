@@ -17,6 +17,7 @@ import type {
   NeutralTranscript,
 } from '../neutral/types.js'
 import { EMPTY_REPORT } from '../neutral/types.js'
+import { translateToCodex } from '../neutral/translate.js'
 
 const CODEX_ID = 'codex' as const
 
@@ -247,13 +248,24 @@ function decode(source: CodexRolloutLine[]): NeutralTranscript {
   return { header, entries }
 }
 
+// See the Claude codec's encode docstring — same identity/translate
+// split (#5 slice 2).
 function encode(
   neutral: NeutralTranscript,
-  _options: EncodeOptions = {},
+  options: EncodeOptions = {},
 ): CodecEmitResult<CodexRolloutLine> {
+  const foreign = neutral.entries.some(e => e.raw.provider !== CODEX_ID)
+  if (foreign) {
+    // targetSessionId forwards to the engine — Codex mints a fresh
+    // rollout id by default (reusing the source id collides in
+    // ~/.codex/sessions), and clone/switch flows need to pin it.
+    const { lines, report } = translateToCodex(neutral, {
+      ...(options.targetSessionId ? { targetSessionId: options.targetSessionId } : {}),
+    })
+    return { lines, report }
+  }
   const lines: CodexRolloutLine[] = []
   for (const entry of neutral.entries) {
-    if (entry.raw.provider !== CODEX_ID) continue
     for (const rec of entry.raw.records) {
       lines.push(rec as CodexRolloutLine)
     }
