@@ -66,6 +66,34 @@ export type {
   ClaudeRole,
 } from './types.js'
 
+// Neutral-hub codec skeleton (issue #5). This is the seam that
+// replaces pairwise A↔B translation with per-provider codecs against
+// a lossless intermediate transcript. See src/neutral/types.ts and
+// src/codecs/*.ts for the full contract and status.
+export { ClaudeCodec } from './codecs/claude.js'
+export { CodexCodec } from './codecs/codex.js'
+export { getCodec, sniffCodec } from './codecs/registry.js'
+export type {
+  AgentProviderId,
+  Codec,
+  CodecEmitResult,
+  CodecReport,
+  EncodeOptions,
+  NeutralContentBlock,
+  NeutralEntry,
+  NeutralEntryFlags,
+  NeutralHeader,
+  NeutralIdentity,
+  NeutralPassthrough,
+  NeutralProviderIds,
+  NeutralThinkingBlock,
+  NeutralToolResultBlock,
+  NeutralToolUseBlock,
+  NeutralTranscript,
+  NeutralTurnBoundary,
+  NeutralUsage,
+} from './neutral/types.js'
+
 export type {
   CodexRolloutLine,
   CodexResponseItemPayload,
