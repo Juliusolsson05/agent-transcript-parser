@@ -17,15 +17,17 @@
 // surface, toClaude.ts becomes a thin `encode(claude, decode(codex, x))`
 // wrapper (see #5 §"Scope of work").
 
-import type { ClaudeEntry } from '../types.js'
+import type { ClaudeContentBlock, ClaudeEntry } from '../types.js'
 import type {
   Codec,
   CodecEmitResult,
   EncodeOptions,
+  NeutralContentBlock,
   NeutralEntry,
   NeutralHeader,
   NeutralIdentity,
   NeutralTranscript,
+  NeutralUsage,
 } from '../neutral/types.js'
 import { EMPTY_REPORT } from '../neutral/types.js'
 
@@ -53,8 +55,12 @@ function decode(source: ClaudeEntry[]): NeutralTranscript {
     // rehydration can emit multiple user entries for one prompt when
     // attachments are involved) — matches the semantics rewindClaude
     // uses to anchor and what the neutral anchor promises across
-    // providers.
-    if (raw.type === 'user' && !raw.isMeta) {
+    // providers. isMeta (bootstrap housekeeping) and isCompactSummary
+    // (synthetic compaction text, type 'user' on the wire but not a
+    // human prompt) are excluded — counting them would let the
+    // neutral anchor drift from what a human counts as "my Nth
+    // prompt", which is exactly the ordinal's contract.
+    if (raw.type === 'user' && !raw.isMeta && !raw.isCompactSummary) {
       if (!lastUserWasContiguous) userTurnOrdinal += 1
       lastUserWasContiguous = true
       identity.userTurnOrdinal = userTurnOrdinal
@@ -68,28 +74,43 @@ function decode(source: ClaudeEntry[]): NeutralTranscript {
       emissionOrder: [idx],
     }
 
-    // Skeleton mapping: use a coarse kind derived from the wire type.
-    // Growing this into the full semantic union (userMessage /
-    // assistantMessage / toolCall / toolResult / reasoning /
-    // compaction / titleChange / contextInjection / lifecycleEvent) is
-    // follow-up work — for now everything that is not one of the
-    // headline chat kinds becomes providerOpaque so encode can
-    // round-trip it verbatim.
+    // Semantic mapping, slice 1 (#5): the headline chat kinds carry
+    // real content now. Claude nests tool_use/tool_result blocks
+    // INSIDE messages (unlike Codex's separate lines), so this codec
+    // never emits standalone toolCall/toolResult entries — the blocks
+    // live in the message's content array. Everything unmapped stays
+    // providerOpaque; the passthrough region remains the encode source
+    // regardless, so classification can only improve, never lose.
     if (raw.type === 'user') {
       return {
         kind: 'userMessage',
         ...identity,
-        content: [],
+        content: mapClaudeContent(raw),
         raw: { ...passthrough },
         ...(raw.isMeta !== undefined ? { isMeta: raw.isMeta } : {}),
+        ...(raw.isCompactSummary !== undefined
+          ? { isCompactSummary: raw.isCompactSummary }
+          : {}),
+        ...(raw.isSidechain !== undefined ? { isSidechain: raw.isSidechain } : {}),
       }
     }
     if (raw.type === 'assistant') {
+      const usage = raw.message?.usage
+        ? ({
+            ...(raw.message.usage as Record<string, unknown>),
+            ...(raw.message.model ? { model: raw.message.model } : {}),
+            ...(raw.message.stop_reason !== undefined
+              ? { stopReason: raw.message.stop_reason }
+              : {}),
+          } as NeutralUsage)
+        : undefined
       return {
         kind: 'assistantMessage',
         ...identity,
-        content: [],
+        content: mapClaudeContent(raw),
+        ...(usage ? { usage } : {}),
         raw: { ...passthrough },
+        ...(raw.isSidechain !== undefined ? { isSidechain: raw.isSidechain } : {}),
       }
     }
     if (raw.type === 'custom-title' && raw.customTitle) {
@@ -97,6 +118,20 @@ function decode(source: ClaudeEntry[]): NeutralTranscript {
         kind: 'titleChange',
         ...identity,
         title: raw.customTitle,
+        raw: { ...passthrough },
+      }
+    }
+    if (raw.type === 'system' && raw.subtype === 'compact_boundary') {
+      return {
+        kind: 'compaction',
+        ...identity,
+        // The boundary itself carries no summary text; the paired
+        // isCompactSummary user entry does (it stays a userMessage
+        // with the flag — coalescing the PAIR into one neutral entry
+        // is a later slice; both classifications are lossless because
+        // encode reads passthrough).
+        summaryBody: '',
+        boundaryId: identity.id,
         raw: { ...passthrough },
       }
     }
@@ -186,6 +221,70 @@ function deriveIdentity(raw: ClaudeEntry, idx: number): NeutralIdentity {
       },
     },
   }
+}
+
+/**
+ * Map a Claude message's content into neutral blocks. String content
+ * is a single text block; block arrays map per-type with the raw
+ * preservation rules from #5 §7 (toolResult keeps the verbatim wire
+ * content in `rawOutput` because downstream normalizers are
+ * heuristic; thinking keeps the unfabricatable `signature`).
+ * Unknown block types degrade to a text block with empty text —
+ * their full payload still rides the entry's passthrough region, so
+ * nothing is lost; they're just invisible to semantic consumers until
+ * a later slice maps them.
+ */
+function mapClaudeContent(raw: ClaudeEntry): NeutralContentBlock[] {
+  const content = raw.message?.content
+  if (typeof content === 'string') {
+    return content.length > 0 ? [{ kind: 'text', text: content }] : []
+  }
+  if (!Array.isArray(content)) return []
+  const blocks: NeutralContentBlock[] = []
+  for (const block of content as ClaudeContentBlock[]) {
+    if (block.type === 'text' && typeof (block as { text?: unknown }).text === 'string') {
+      blocks.push({ kind: 'text', text: (block as { text: string }).text })
+      continue
+    }
+    if (block.type === 'tool_use') {
+      const b = block as Extract<ClaudeContentBlock, { type: 'tool_use' }>
+      blocks.push({
+        kind: 'toolUse',
+        callId: b.id,
+        toolName: b.name,
+        providerKind: 'tool_use',
+        input: b.input,
+      })
+      continue
+    }
+    if (block.type === 'tool_result') {
+      const b = block as Extract<ClaudeContentBlock, { type: 'tool_result' }>
+      blocks.push({
+        kind: 'toolResult',
+        callId: b.tool_use_id,
+        content:
+          typeof b.content === 'string' && b.content.length > 0
+            ? [{ kind: 'text', text: b.content }]
+            : [],
+        ...(b.is_error !== undefined ? { isError: b.is_error } : {}),
+        rawOutput: typeof b.content === 'string' ? b.content : (b.content as Array<Record<string, unknown>>),
+        ...(raw.toolUseResult ? { structuredResult: raw.toolUseResult } : {}),
+      })
+      continue
+    }
+    if (block.type === 'thinking') {
+      const b = block as Extract<ClaudeContentBlock, { type: 'thinking' }>
+      blocks.push({
+        kind: 'thinking',
+        text: b.thinking,
+        ...(b.signature ? { signature: b.signature } : {}),
+      })
+      continue
+    }
+    // Unknown block type: invisible semantically, preserved via the
+    // entry's passthrough.
+  }
+  return blocks
 }
 
 /**
