@@ -77,9 +77,12 @@ function* checkFunctionCallArgumentsJson(
     if (!isRecord(line) || line.type !== 'response_item') continue
     const payload = line.payload as Line | undefined
     if (!isRecord(payload)) continue
-    if (payload.type !== 'function_call' && payload.type !== 'custom_tool_call') continue
-    const field = payload.type === 'function_call' ? 'arguments' : 'input'
-    const raw = payload[field]
+    // WHY custom_tool_call is deliberately excluded: its `input` is an opaque
+    // string defined by the custom tool (apply_patch is the canonical example),
+    // not JSON-encoded function arguments. Treating both variants alike made
+    // the previously unused validator reject valid native Codex rollouts.
+    if (payload.type !== 'function_call') continue
+    const raw = payload.arguments
     if (typeof raw !== 'string') {
       // Schema will already flag non-string; skip so we don't
       // double-report.
@@ -92,8 +95,8 @@ function* checkFunctionCallArgumentsJson(
         severity: 'error',
         code: 'invariant.tool_args_not_json',
         line: i + 1,
-        path: `/payload/${field}`,
-        message: `${payload.type}.${field} is not valid JSON: ${(err as Error).message}`,
+        path: '/payload/arguments',
+        message: `function_call.arguments is not valid JSON: ${(err as Error).message}`,
       }
     }
   }

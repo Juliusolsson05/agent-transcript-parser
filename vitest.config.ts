@@ -20,7 +20,6 @@ export default defineConfig({
           name: 'system',
           environment: 'node',
           include: ['testing/**/*.system.test.ts'],
-          passWithNoTests: true,
           fileParallelism: false,
         },
       },
@@ -37,6 +36,10 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       include: ['src/**/*.ts'],
+      // WHY these mirror the measured full-source baseline: corpus coverage is
+      // now an enforced floor rather than a report that CI computes and throws
+      // away. New semantic cases should ratchet the relevant dimension upward.
+      thresholds: { statements: 41, branches: 30, functions: 46, lines: 43 },
     },
   },
 })

@@ -59,6 +59,15 @@ function buildValidator(): (line: unknown) => ValidationIssue[] {
     // $data: false — we don't use $data refs; keep the surface small.
   })
   addFormats(ajv)
+  // WHY this upstream Rust format is registered locally: AJV otherwise emits
+  // warnings and silently ignores the constraint. Codex serializes uint64 as a
+  // JSON number in these schemas, so the strongest JavaScript-safe check is a
+  // non-negative safe integer; values beyond that precision cannot round-trip
+  // through JSON.parse without already losing information.
+  ajv.addFormat('uint64', {
+    type: 'number',
+    validate: value => Number.isSafeInteger(value) && value >= 0,
+  })
 
   const upstream = JSON.parse(
     readFileSync(join(SCHEMAS_DIR, 'codex-v2.schemas.json'), 'utf8'),
@@ -67,11 +76,14 @@ function buildValidator(): (line: unknown) => ValidationIssue[] {
     readFileSync(join(SCHEMAS_DIR, 'rollout-envelope.schema.json'), 'utf8'),
   ) as Record<string, unknown>
 
-  // Register upstream under the $id the envelope schema expects. If
-  // upstream doesn't declare $id (it doesn't today), ajv would refuse
-  // to resolve the cross-file $ref. We force an $id here so the
-  // envelope's `$ref: "codex-v2.schemas.json#/..."` resolves.
-  ajv.addSchema(upstream, 'codex-v2.schemas.json')
+  // WHY this key is resolved against the envelope's absolute $id: AJV resolves
+  // relative $refs as URLs, not as filenames. Registering only the bare
+  // `codex-v2.schemas.json` key leaves the validator unable to compile even
+  // though both files are beside each other on disk. The local-only hostname
+  // is an identifier; validation never performs network access.
+  const envelopeId = String(envelope.$id)
+  const upstreamId = new URL('codex-v2.schemas.json', envelopeId).href
+  ajv.addSchema(upstream, upstreamId)
   const validate = ajv.compile(envelope)
 
   cachedValidator = (line: unknown) => {
