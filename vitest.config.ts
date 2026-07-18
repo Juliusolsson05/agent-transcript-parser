@@ -2,11 +2,6 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    // WHY this must be root-level: Vitest 4 decides whether a selected project
-    // has no files before applying that project's nested options. Core and
-    // system are intentionally empty today because parser verification belongs
-    // to the corpus tier, but their standardized commands must still work.
-    passWithNoTests: true,
     projects: [
       {
         test: {
