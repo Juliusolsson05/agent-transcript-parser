@@ -18,19 +18,35 @@
   "files": [
     "dist"
   ],
+  "engines": {
+    "node": ">=20.19.0"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "node scripts/clean-dist.mjs && tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:core": "vitest run --project core",
+    "test:system": "vitest run --project system",
+    "test:corpus": "vitest run --project corpus",
+    "test:live": "vitest run --config vitest.live.config.ts --passWithNoTests",
+    "test:coverage": "vitest run --coverage",
+    "test:package": "npm run build && node scripts/test-package.mjs",
+    "test:contract": "node scripts/check-test-contract.mjs",
+    "check": "npm run test:contract && npm run typecheck && npm test && npm run test:package",
     "verify": "tsx testing/verify.ts",
     "verify:neutral-round-trip": "tsx testing/round-trip-identity.ts",
     "verify:neutral-semantics": "tsx testing/semantic-assertions.ts",
     "verify:neutral-translate": "tsx testing/translate-equivalence.ts"
   },
   "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@vitest/coverage-v8": "^4.1.10",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "node-pty": "^1.1.0",
     "tsx": "^4.21.0",
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   },
   "license": "MIT"
 }
