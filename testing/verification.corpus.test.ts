@@ -21,13 +21,22 @@ async function runVerification(script: string): Promise<string> {
         NODE_NO_WARNINGS: '1',
       },
       maxBuffer: 10 * 1024 * 1024,
+      // WHY the child owns a shorter deadline than the Vitest case: if the
+      // legacy verifier deadlocks, execFile must terminate it before Vitest
+      // abandons the assertion. Reversing those deadlines leaves an orphaned
+      // TypeScript process after the runner reports its timeout.
+      timeout: 20_000,
     },
   )
   return stdout
 }
 
 describe('checked-in transcript corpus', () => {
-  it('passes the full compatibility battery', async () => {
-    await expect(runVerification('testing/verify.ts')).resolves.toContain('All checks passed')
-  })
+  it(
+    'passes the full compatibility battery',
+    async () => {
+      await expect(runVerification('testing/verify.ts')).resolves.toContain('All checks passed')
+    },
+    30_000,
+  )
 })
