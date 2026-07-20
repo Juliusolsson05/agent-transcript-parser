@@ -9,6 +9,7 @@ export function archiveProvenance(
 ): Record<string, unknown> {
   const stripped = stripNestedProvenance(entry.source.raw)
   const serialized = JSON.stringify(stripped)
+  const sourceBytes = new TextEncoder().encode(serialized).byteLength
   return {
     schema_version: 1,
     source_provider: entry.source.provider,
@@ -18,9 +19,9 @@ export function archiveProvenance(
     // objects and relied on perfect short-circuiting to avoid growth. Archive
     // fidelity still benefits from carrying small unknown records, but a size
     // cap plus recursive-provenance removal makes repeated switches bounded.
-    ...(serialized.length <= maxBytes
+    ...(sourceBytes <= maxBytes
       ? { source: stripped }
-      : { source_omitted: true, source_bytes: serialized.length }),
+      : { source_omitted: true, source_bytes: sourceBytes }),
   }
 }
 

@@ -1,4 +1,5 @@
 import type { ConversationContent, ConversationDocument, ConversationEntry } from '../../conversation/types.js'
+import type { ConversationDecoder } from '../../conversation/decoder.js'
 import type { ClaudeClassifiedRecord } from '../classify/types.js'
 
 export function decodeClaudeConversation(
@@ -70,6 +71,11 @@ export function decodeClaudeConversation(
     entries.push({ kind: 'opaque', nativeType: stringField(record.raw, 'type'), timestamp, source })
   }
   return { schemaVersion: 1, sourceProvider: 'claude', sourceSessionIds: [...sessionIds], entries }
+}
+
+export const claudeConversationDecoder: ConversationDecoder<'claude', ClaudeClassifiedRecord> = {
+  provider: 'claude',
+  decode: decodeClaudeConversation,
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | null {

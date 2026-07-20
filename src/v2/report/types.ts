@@ -11,9 +11,9 @@ export type ProjectionChangeKind =
 
 export interface ProjectionChange {
   kind: ProjectionChangeKind
-  sourceProvider: 'claude' | 'codex' | null
+  sourceProvider: string | null
   sourceLine: number | null
-  targetProvider: 'claude' | 'codex'
+  targetProvider: string
   code: string
   message: string
   evidence: EvidenceClaim[]
@@ -21,18 +21,21 @@ export interface ProjectionChange {
 
 export interface ProjectionReport {
   profile: 'archive' | 'native-resume'
-  sourceProvider: 'claude' | 'codex'
-  targetProvider: 'claude' | 'codex'
+  sourceProvider: string
+  targetProvider: string
   changes: ProjectionChange[]
   counts: Record<ProjectionChangeKind, number>
 }
 
-export function createProjectionReport(
-  profile: ProjectionReport['profile'],
+export function createProjectionReport<
+  TProfile extends ProjectionReport['profile'],
+  TTargetProvider extends string,
+>(
+  profile: TProfile,
   sourceProvider: ProjectionReport['sourceProvider'],
-  targetProvider: ProjectionReport['targetProvider'],
+  targetProvider: TTargetProvider,
   changes: ProjectionChange[],
-): ProjectionReport {
+): ProjectionReport & { profile: TProfile; targetProvider: TTargetProvider } {
   const counts: ProjectionReport['counts'] = {
     preserved: 0,
     dropped: 0,

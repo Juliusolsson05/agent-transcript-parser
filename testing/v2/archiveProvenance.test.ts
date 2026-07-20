@@ -29,4 +29,10 @@ describe('bounded archive provenance', () => {
     expect(result.source_omitted).toBe(true)
     expect(result.source_bytes).toBeGreaterThan(64)
   })
+
+  it('applies the cap to encoded bytes rather than JavaScript character count', () => {
+    const result = archiveProvenance(opaque({ value: '🧠'.repeat(20) }), 64)
+    expect(result.source).toBeUndefined()
+    expect(result.source_bytes).toBeGreaterThan(64)
+  })
 })

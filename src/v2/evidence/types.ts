@@ -16,7 +16,11 @@ export type EvidenceProvenance =
   | 'v1-compatibility'
   | 'self-round-trip'
 
-export type TranscriptProvider = 'claude' | 'codex'
+// WHY this is deliberately open-ended instead of a Claude/Codex union: the
+// evidence model is shared infrastructure for every future adapter. Requiring
+// a central union edit for each provider would make the supposedly neutral
+// layer a hidden registry and would eventually recreate pairwise coupling.
+export type TranscriptProvider = string
 
 export type EvidenceClaimStage =
   | 'wire-shape'

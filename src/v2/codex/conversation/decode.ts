@@ -1,4 +1,5 @@
 import type { ConversationContent, ConversationDocument, ConversationEntry } from '../../conversation/types.js'
+import type { ConversationDecoder } from '../../conversation/decoder.js'
 import type { CodexClassifiedRecord } from '../classify/types.js'
 
 const CALL_TYPES = new Set(['function_call', 'custom_tool_call', 'local_shell_call'])
@@ -63,6 +64,11 @@ export function decodeCodexConversation(records: readonly CodexClassifiedRecord[
     entries.push({ kind: 'opaque', nativeType: stringField(record.raw, 'type'), timestamp, source })
   }
   return { schemaVersion: 1, sourceProvider: 'codex', sourceSessionIds: [...sessionIds], entries }
+}
+
+export const codexConversationDecoder: ConversationDecoder<'codex', CodexClassifiedRecord> = {
+  provider: 'codex',
+  decode: decodeCodexConversation,
 }
 
 function decodeContent(value: unknown): ConversationContent[] {

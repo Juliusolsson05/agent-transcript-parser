@@ -20,7 +20,9 @@ export interface TranscriptInvariantDiagnostic {
 }
 
 export interface TranscriptGraphAnalysis {
-  provider: 'claude' | 'codex'
+  // Analysis results cross the provider-neutral operation boundary, so this
+  // cannot be a closed list of whichever adapters happen to ship today.
+  provider: string
   sessionIds: string[]
   prompts: PromptReference[]
   diagnostics: TranscriptInvariantDiagnostic[]

@@ -1,7 +1,12 @@
 import type { EvidenceClaim } from '../evidence/claim.js'
 
+// Provider ids are extensible by design. Built-in adapters still return the
+// useful literals "claude" and "codex", but the neutral protocol must not need
+// a release merely to admit that another provider exists.
+export type ProviderId = string
+
 export interface ConversationSource {
-  provider: 'claude' | 'codex'
+  provider: ProviderId
   line: number
   raw: Record<string, unknown>
   evidence: EvidenceClaim[]
@@ -66,7 +71,7 @@ export type ConversationEntry =
 
 export interface ConversationDocument {
   schemaVersion: 1
-  sourceProvider: 'claude' | 'codex'
+  sourceProvider: ProviderId
   sourceSessionIds: string[]
   entries: ConversationEntry[]
 }
