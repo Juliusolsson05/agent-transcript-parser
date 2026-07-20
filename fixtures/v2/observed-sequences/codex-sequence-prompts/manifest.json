@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "caseId": "codex-sequence-prompts",
+  "description": "Value-redacted observed sequence for sequence:prompt-addresses-and-duplicate-events.",
+  "provider": "codex",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "codex",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T18:00:47.495Z",
+  "normalization": [
+    "Selected the smallest observed sequence satisfying the relationship.",
+    "Kept only relationship-bearing records in original order.",
+    "Pseudonymized scalar values while preserving identity equality across records."
+  ],
+  "redactions": [
+    "All private scalar content, paths, URLs, timestamps, models, and identifiers."
+  ],
+  "features": [
+    "sequence:prompt-addresses-and-duplicate-events"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "335c2332e2fd02364d222293e74d04138fac490cabd553b16d37de2787cad7bc",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

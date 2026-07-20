@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "caseId": "claude-sequence-prompts",
+  "description": "Value-redacted observed sequence for sequence:prompt-addresses.",
+  "provider": "claude",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "claude",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T18:00:47.495Z",
+  "normalization": [
+    "Selected the smallest observed sequence satisfying the relationship.",
+    "Kept only relationship-bearing records in original order.",
+    "Pseudonymized scalar values while preserving identity equality across records."
+  ],
+  "redactions": [
+    "All private scalar content, paths, URLs, timestamps, models, and identifiers."
+  ],
+  "features": [
+    "sequence:prompt-addresses"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "8a93ba9d14f7b05059f941693595660fb3d50248d7326d45b633735eab248af7",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

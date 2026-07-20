@@ -259,6 +259,16 @@ export function observedFamilyDescriptors(
  * the edge that makes it useful.
  */
 export function redactObservedValue(value: unknown): unknown {
+  return createObservedRedactor()(value)
+}
+
+/** Preserve identity aliases across records while retaining every record. */
+export function redactObservedSequence(values: readonly unknown[]): unknown[] {
+  const redact = createObservedRedactor()
+  return values.map(value => redact(value))
+}
+
+function createObservedRedactor(): (value: unknown) => unknown {
   const aliases = new Map<string, string>()
   let nextAlias = 1
 
@@ -316,7 +326,7 @@ export function redactObservedValue(value: unknown): unknown {
     return result
   }
 
-  return redact(value, [], 0)
+  return value => redact(value, [], 0)
 }
 
 function reviewedDiscriminator(value: unknown): string | undefined {
