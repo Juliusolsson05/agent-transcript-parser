@@ -1,0 +1,1 @@
+{"payload":{"call_id":"fixture-id-1","duration":{"nanos":1,"secs":0},"invocation":{"arguments":{},"server":"fixture text","tool":"fixture text"},"result":{"Ok":{"content":[{"text":"fixture text","type":"text"}],"isError":false}},"type":"mcp_tool_call_end"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}

@@ -1,0 +1,1 @@
+{"payload":{"arguments":{"limit":1,"query":"fixture text"},"call_id":"fixture-id-1","execution":"fixture text","id":"fixture-id-2","internal_chat_message_metadata_passthrough":{"turn_id":"fixture-id-3"},"status":"completed","type":"tool_search_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}

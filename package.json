@@ -1,7 +1,7 @@
 {
   "name": "agent-transcript-parser",
   "version": "0.1.0",
-  "description": "Translate agent transcripts between formats (Codex ↔ Claude) with round-trip fidelity.",
+  "description": "Evidence-driven transcript classification, analysis, and provider-neutral projection.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -32,11 +32,11 @@
     "test:coverage": "vitest run --coverage",
     "test:package": "npm run build && node scripts/test-package.mjs",
     "test:contract": "node scripts/check-test-contract.mjs",
+    "corpus:extract-observed": "tsx testing/corpus/extract-observed-fixtures.mts",
+    "corpus:extract-sequences": "tsx testing/corpus/extract-observed-sequences.mts",
+    "corpus:profile": "tsx testing/corpus/profile-local-corpus.mts",
     "check": "npm run test:contract && npm run typecheck && npm test && npm run test:package",
-    "verify": "tsx testing/verify.ts",
-    "verify:neutral-round-trip": "tsx testing/round-trip-identity.ts",
-    "verify:neutral-semantics": "tsx testing/semantic-assertions.ts",
-    "verify:neutral-translate": "tsx testing/translate-equivalence.ts"
+    "verify": "npm run check"
   },
   "devDependencies": {
     "@types/node": "^20.19.43",

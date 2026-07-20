@@ -1,0 +1,1 @@
+{"payload":{"call_id":"fixture-id-1","receiver_agent_nickname":"FixtureName","receiver_agent_role":"fixture text","receiver_thread_id":"fixture-id-2","sender_thread_id":"fixture-id-3","status":{"completed":"fixture text"},"type":"collab_close_end"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}

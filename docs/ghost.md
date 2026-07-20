@@ -1,8 +1,8 @@
 # Ghost records
 
-A **ghost** is a transcript record tagged `_atp.origin = 'ghost'` that stands in for a real record that does not yet exist, may never exist, or is expected to be supplied by another producer. Ghosts are **valid JSONL** in either Claude or Codex format — native parsers ignore unknown fields, so a ghost-tagged file loads unchanged in `claude --resume` or a Codex rollout reload.
+A **ghost** is a Claude-shaped renderer record tagged `_atp.origin = 'ghost'` that stands in for a real record that does not yet exist, may never exist, or is expected to be supplied by another producer. Agent Code stores ghosts in its own journal; they are not written into provider-owned transcript files.
 
-Ghost sits next to the existing `claude` / `codex` / `synthesized` origins in the sidecar as a first-class citizen: typed, reconcilable, and explicitly skipped by both converters.
+Ghost is a separate, frozen runtime subsystem: typed and reconcilable, but outside the durable transcript engine. The engine recognizes the complete marker structurally and excludes it from semantic decoding and every output projection.
 
 ## Why it's useful
 
@@ -57,7 +57,7 @@ The rationale for keeping rules 2–3 out of the library is that "same content" 
 **atp guarantees:**
 
 - Ghost records round-trip losslessly through read/reduce/merge cycles.
-- Both converters (`toClaude`, `toCodex`) skip ghosts on export — they are a runtime artifact, not durable transcript content. A transcript that contained ghosts on input produces a ghost-free output on conversion.
+- Conversation decoders and projectors exclude valid ghosts — they are a runtime artifact, not durable transcript content.
 - `_atp.context` is carried through read/reduce/merge unchanged. The library never reads it.
 - Ghost uuids never collide with real Claude or Codex uuids. The `g-` prefix is not produced by `crypto.randomUUID()`.
 
@@ -75,7 +75,7 @@ The rationale for keeping rules 2–3 out of the library is that "same content" 
 
 ## API
 
-All exports are also available from the package root (`agent-transcript-parser`) for convenience.
+Ghost exports are deliberately isolated from the transcript engine.
 
 ```ts
 import {
@@ -89,7 +89,7 @@ import {
   isGhostUuid,
   isGhost,
   ghostSidecar,
-} from 'agent-transcript-parser'
+} from 'agent-transcript-parser/ghost'
 
 import type {
   GhostEntry,
@@ -136,8 +136,7 @@ import {
   supersedeGhost,
   reduceGhostLog,
   mergeWithUpstream,
-  toCodex,
-} from 'agent-transcript-parser'
+} from 'agent-transcript-parser/ghost'
 
 // --- Live layer (producer side) ---
 //
@@ -177,11 +176,7 @@ const upstream = readAuthoritativeTranscript()
 const ghosts = reduceGhostLog(readGhostLog())
 const rendered = mergeWithUpstream(upstream, ghosts)
 
-// --- Export side ---
-//
-// Converters skip ghosts. Exporting a session mid-flight produces
-// a clean Codex rollout without placeholders.
-
-const codex = toCodex(upstream) // ghosts never reach toCodex; but
-                                // feeding a mixed list is also safe.
+// Durable provider projection is a separate engine concern. Feeding a mixed
+// transcript through the engine excludes this valid provisional marker before it can
+// become conversation history.
 ```

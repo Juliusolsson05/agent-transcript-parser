@@ -155,7 +155,7 @@ function* checkCallIdPairing(
 // crash.
 //
 // Translator-synthesized lines are allowed to precede (they carry
-// `_atp: { origin: "synthesized" }` in fidelity mode) because toClaude
+  // legacy `_atp: { origin: "synthesized" }` records from pairwise exports
 // absorbs them into context without emitting entries — but we don't
 // check `_atp` here because lossy mode strips it, and the invariant
 // must hold in both modes.

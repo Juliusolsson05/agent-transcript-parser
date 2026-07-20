@@ -1,118 +1,25 @@
-// Public entry point.
-
-export { toClaude } from './toClaude.js'
-export { toCodex } from './toCodex.js'
-export type { ConvertOptions } from './toClaude.js'
-
-export { cloneClaudeTranscript } from './cloneClaude.js'
-export type { CloneClaudeOptions, CloneClaudeResult } from './cloneClaude.js'
-
-export { cloneCodexRollout } from './cloneCodex.js'
-export type { CloneCodexOptions, CloneCodexResult } from './cloneCodex.js'
-
-export {
-  rewindClaudeTranscript,
-  RewindClaudeAnchorNotFoundError,
-} from './rewindClaude.js'
-export type {
-  RewindClaudeAnchor,
-  RewindClaudeOptions,
-  RewindClaudeResult,
-} from './rewindClaude.js'
-
-export {
-  rewindCodexRollout,
-  RewindCodexAnchorNotFoundError,
-  RewindCodexMissingSessionMetaError,
-} from './rewindCodex.js'
-export type {
-  RewindCodexAnchor,
-  RewindCodexOptions,
-  RewindCodexResult,
-} from './rewindCodex.js'
-
-export { detectFormat } from './detectFormat.js'
-
-export {
-  ATP_KEY,
-  attachSidecar,
-  ghostSidecar,
-  isGhost,
-  readSidecar,
-  stripSidecar,
-} from './sidecar.js'
-export type { AtpGhostSidecar, AtpSidecar, GhostEntry } from './sidecar.js'
-
-export {
-  createGhost,
-  ghostUuid,
-  isGhostUuid,
-  mergeWithUpstream,
-  orphanGhost,
-  reduceGhostLog,
-  supersedeGhost,
-  updateGhost,
-} from './ghost.js'
-export type { CreateGhostParams, MergeOptions } from './ghost.js'
-
-export type {
-  ClaudeEntry,
-  ClaudeContentBlock,
-  ClaudeTextBlock,
-  ClaudeToolUseBlock,
-  ClaudeToolResultBlock,
-  ClaudeThinkingBlock,
-  ClaudeMessage,
-  ClaudeRole,
-} from './types.js'
-
-// Neutral-hub codec skeleton (issue #5). This is the seam that
-// replaces pairwise A↔B translation with per-provider codecs against
-// a lossless intermediate transcript. See src/neutral/types.ts and
-// src/codecs/*.ts for the full contract and status.
-export { ClaudeCodec } from './codecs/claude.js'
-export { CodexCodec } from './codecs/codex.js'
-export { getCodec, sniffCodec } from './codecs/registry.js'
-export {
-  reconstructSource,
-  translateToClaude,
-  translateToCodex,
-} from './neutral/translate.js'
-export type { TranslateResult } from './neutral/translate.js'
-export type {
-  AgentProviderId,
-  Codec,
-  CodecEmitResult,
-  CodecReport,
-  EncodeOptions,
-  NeutralContentBlock,
-  NeutralEntry,
-  NeutralEntryFlags,
-  NeutralHeader,
-  NeutralIdentity,
-  NeutralPassthrough,
-  NeutralProviderIds,
-  NeutralThinkingBlock,
-  NeutralToolResultBlock,
-  NeutralToolUseBlock,
-  NeutralTranscript,
-  NeutralTurnBoundary,
-  NeutralUsage,
-} from './neutral/types.js'
-
-export type {
-  CodexRolloutLine,
-  CodexResponseItemPayload,
-  CodexEventMsgPayload,
-  CodexSessionMetaPayload,
-  CodexTurnContextPayload,
-  CodexMessagePayload,
-  CodexFunctionCallPayload,
-  CodexFunctionCallOutputPayload,
-  CodexCustomToolCallPayload,
-  CodexCustomToolCallOutputPayload,
-  CodexReasoningPayload,
-  CodexLocalShellCallPayload,
-  CodexWebSearchCallPayload,
-  CodexContentItem,
-} from './types.js'
+export type * from './analysis/types.js'
+export * from './claude/analyze/index.js'
+export * from './claude/classify/index.js'
+export * from './claude/conversation/index.js'
+export * from './claude/project/index.js'
+export * from './codex/analyze/index.js'
+export * from './codex/classify/index.js'
+export * from './codex/conversation/index.js'
+export * from './codex/project/index.js'
+export type * from './conversation/types.js'
+export type * from './conversation/decoder.js'
+export type { EvidenceClaim } from './evidence/claim.js'
+export * from './evidence/types.js'
+export { fingerprintJsonStructure } from './evidence/fingerprint.js'
+export * from './jsonl/index.js'
+export * from './operations/promptAddress.js'
+export * from './operations/conversation.js'
+export * from './operations/nativeResume.js'
+export { archiveProvenance } from './projection/archiveProvenance.js'
+export type * from './projection/types.js'
+export { pairConversationTools } from './projection/toolPairs.js'
+export * from './report/types.js'
+export { isGhostRuntimeArtifact } from './runtimeArtifact.js'
+export { translateArchive } from './translation/archive.js'
+export { translateNativeResume } from './translation/nativeResume.js'

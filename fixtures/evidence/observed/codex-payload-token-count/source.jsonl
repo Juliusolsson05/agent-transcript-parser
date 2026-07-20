@@ -1,0 +1,1 @@
+{"payload":{"info":null,"rate_limits":{"credits":null,"limit_id":"fixture-id-1","limit_name":null,"plan_type":"fixture text","primary":{"resets_at":1,"used_percent":1,"window_minutes":1},"secondary":{"resets_at":1,"used_percent":1,"window_minutes":1}},"type":"token_count"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}

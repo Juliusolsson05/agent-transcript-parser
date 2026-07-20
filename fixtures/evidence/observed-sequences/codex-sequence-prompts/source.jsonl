@@ -1,0 +1,7 @@
+{"payload":{"cli_version":"0.0.0-fixture","cwd":"/fixture/project","git":{"branch":"fixture-branch"},"id":"fixture-id-1","model_provider":"fixture-model","originator":"fixture text","source":"fixture text","timestamp":"2026-01-01T00:00:00.000Z"},"timestamp":"2026-01-01T00:00:00.000Z","type":"session_meta"}
+{"payload":{"message":"fixture text","type":"user_message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"message":"fixture text","type":"user_message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"message":"fixture text","type":"user_message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}

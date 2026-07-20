@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "caseId": "codex-sequence-tool-cycle",
+  "description": "Value-redacted observed sequence for sequence:tool-cycle.",
+  "provider": "codex",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "codex",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T18:00:47.495Z",
+  "normalization": [
+    "Selected the smallest observed sequence satisfying the relationship.",
+    "Kept only relationship-bearing records in original order.",
+    "Pseudonymized scalar values while preserving identity equality across records."
+  ],
+  "redactions": [
+    "All private scalar content, paths, URLs, timestamps, models, and identifiers."
+  ],
+  "features": [
+    "sequence:tool-cycle"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "7afdbc4852a9678b51a5c655b9d7df3205b4b2528acf8e7a282533ec506c80c7",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

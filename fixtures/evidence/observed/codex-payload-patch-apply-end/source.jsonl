@@ -1,0 +1,1 @@
+{"payload":{"call_id":"fixture-id-1","changes":{"dynamic_object_key_1":{"content":"fixture text","type":"fixture text"}},"status":"completed","stderr":"fixture text","stdout":"fixture text","success":true,"turn_id":"fixture-id-2","type":"patch_apply_end"},"timestamp":"2026-01-01T00:00:00.000Z","type":"event_msg"}

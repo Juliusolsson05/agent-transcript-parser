@@ -1,0 +1,1 @@
+{"payload":{"author":"fixture text","content":[{"text":"fixture text","type":"input_text"},{"encrypted_content":"<redacted-data>","type":"encrypted_content"}],"internal_chat_message_metadata_passthrough":{"turn_id":"fixture-id-1"},"recipient":"fixture text","type":"agent_message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}

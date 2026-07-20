@@ -1,0 +1,3 @@
+{"payload":{"cli_version":"0.0.0-fixture","cwd":"/fixture/project","git":{"branch":"fixture-branch"},"id":"fixture-id-1","model_provider":"fixture-model","originator":"fixture text","source":"fixture text","timestamp":"2026-01-01T00:00:00.000Z"},"timestamp":"2026-01-01T00:00:00.000Z","type":"session_meta"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-2","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-2","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
