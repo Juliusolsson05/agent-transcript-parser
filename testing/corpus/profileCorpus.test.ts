@@ -8,7 +8,7 @@ import { profileCorpus } from './profileCorpus.js'
 
 describe('profileCorpus', () => {
   it('writes aggregate structure without retaining private values or paths', async () => {
-    const temporary = await mkdtemp(join(tmpdir(), 'atp-v2-profile-'))
+    const temporary = await mkdtemp(join(tmpdir(), 'atp-profile-'))
     const claudeRoot = join(temporary, 'private-provider-home')
     const projectDir = join(claudeRoot, '-Users-private-secret-repository')
     const outputPath = join(temporary, 'output', 'profile.json')
@@ -42,7 +42,7 @@ describe('profileCorpus', () => {
   })
 
   it('refuses to write inside a provider transcript root', async () => {
-    const temporary = await mkdtemp(join(tmpdir(), 'atp-v2-profile-boundary-'))
+    const temporary = await mkdtemp(join(tmpdir(), 'atp-profile-boundary-'))
     const claudeRoot = join(temporary, 'claude')
     await mkdir(claudeRoot, { recursive: true })
 

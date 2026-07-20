@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { readFile, readdir, stat, mkdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 
-import type { FixtureEvidenceManifest, TranscriptProvider } from '../../src/v2/evidence/types.js'
+import type { FixtureEvidenceManifest, TranscriptProvider } from '../../src/evidence/types.js'
 import { redactObservedSequence } from './observedFixtures.js'
 
 interface SequenceCandidate {

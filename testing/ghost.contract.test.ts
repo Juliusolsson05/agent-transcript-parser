@@ -16,7 +16,7 @@ import type { ClaudeEntry, GhostEntry } from '../src/ghost-sidecar.js'
 
 // Ghost is deliberately frozen during the transcript-engine rewrite. These
 // tests characterize its existing public behavior at the boundary consumed by
-// Agent Code; the v2 conversation model must not absorb or reinterpret this
+// Agent Code; the neutral conversation model must not absorb or reinterpret this
 // provisional live-state ledger until those host invariants are redesigned.
 describe('frozen ghost contract', () => {
   it('uses a deterministic identity and rejects ambiguous coordinates', () => {

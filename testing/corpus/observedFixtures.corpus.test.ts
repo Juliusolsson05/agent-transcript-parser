@@ -5,10 +5,10 @@ import Ajv2020 from 'ajv/dist/2020.js'
 import addFormats from 'ajv-formats'
 import { describe, expect, it } from 'vitest'
 
-const fixtureRoot = new URL('../../fixtures/v2/', import.meta.url)
-const observedRoot = new URL('../../fixtures/v2/observed/', import.meta.url)
+const fixtureRoot = new URL('../../fixtures/evidence/', import.meta.url)
+const observedRoot = new URL('../../fixtures/evidence/observed/', import.meta.url)
 
-describe('observed v2 fixture corpus', () => {
+describe('observed fixture corpus', () => {
   it('keeps every observed record adjacent to valid, bounded provenance', async () => {
     const schema = JSON.parse(
       await readFile(new URL('manifest.schema.json', fixtureRoot), 'utf8'),

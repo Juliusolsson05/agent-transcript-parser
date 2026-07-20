@@ -42,7 +42,7 @@
 //     the freshest one by `updatedAt`. No in-place mutation, no file
 //     rewrites, no lock files.
 //
-//  3. V2 decoders SKIP valid ghosts before semantic conversation decoding.
+//  3. Conversation decoders SKIP valid ghosts before semantic decoding.
 //     They are a runtime artifact. Projecting one into durable provider
 //     history would turn a provisional observation into a false fact.
 //

@@ -3,11 +3,11 @@ import { mkdir, open, readdir, stat, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { dirname, relative, resolve, sep } from 'node:path'
 
-import { fingerprintJsonStructure } from '../../src/v2/evidence/fingerprint.js'
+import { fingerprintJsonStructure } from '../../src/evidence/fingerprint.js'
 import type {
   StructuralFingerprint,
   TranscriptProvider,
-} from '../../src/v2/evidence/types.js'
+} from '../../src/evidence/types.js'
 
 export type CorpusCategory =
   | 'claude-main'

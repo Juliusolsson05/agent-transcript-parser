@@ -1,10 +1,12 @@
 // Minimal frozen wire vocabulary for the ghost subsystem.
 //
-// WHY this is independent from transcript-v2: ghosts represent provisional
-// render ownership, while v2 represents durable provider history. The former
+// WHY this is independent from the transcript engine: ghosts represent
+// provisional render ownership, while the engine represents durable provider
+// history. The former
 // uses a Claude-shaped carrier because that is Agent Code's established live
 // rendering seam; importing the old converter-wide `types.ts` kept hundreds of
-// permissive v1 wire types alive merely to describe this one frozen record.
+// permissive converter-wide wire types alive merely to describe this one frozen
+// record.
 
 export const ATP_KEY = '_atp' as const
 

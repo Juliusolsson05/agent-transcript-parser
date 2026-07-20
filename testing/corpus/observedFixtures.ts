@@ -4,11 +4,11 @@ import { mkdir, readdir, stat, writeFile } from 'node:fs/promises'
 import { createInterface } from 'node:readline'
 import { join, resolve } from 'node:path'
 
-import { safeStructuralDiscriminator } from '../../src/v2/evidence/fingerprint.js'
+import { safeStructuralDiscriminator } from '../../src/evidence/fingerprint.js'
 import type {
   FixtureEvidenceManifest,
   TranscriptProvider,
-} from '../../src/v2/evidence/types.js'
+} from '../../src/evidence/types.js'
 
 const MAX_REDACTION_DEPTH = 32
 const MAX_ARRAY_SHAPES = 16

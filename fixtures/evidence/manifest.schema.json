@@ -1,0 +1,102 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-code.dev/schemas/agent-transcript-parser/evidence-fixture-manifest.json",
+  "title": "Agent transcript parser fixture evidence manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "caseId",
+    "description",
+    "provider",
+    "format",
+    "provenance",
+    "profile",
+    "reviewedAt",
+    "normalization",
+    "redactions",
+    "features",
+    "proves",
+    "doesNotProve",
+    "source"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "caseId": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]+$" },
+    "description": { "type": "string", "minLength": 1 },
+    "provider": { "enum": ["claude", "codex"] },
+    "format": { "const": "jsonl" },
+    "provenance": {
+      "enum": [
+        "observed-wire",
+        "pinned-upstream-source",
+        "controlled-native-observation",
+        "agent-code-consumer",
+        "human-reviewed-semantics",
+        "synthetic-regression",
+        "self-round-trip"
+      ]
+    },
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provider"],
+      "properties": {
+        "provider": { "enum": ["claude", "codex"] },
+        "cliVersion": { "type": "string" },
+        "sourceCommit": { "type": "string" },
+        "schemaVersion": { "type": "string" },
+        "platform": { "type": "string" }
+      }
+    },
+    "capturedAt": { "type": "string", "format": "date-time" },
+    "reviewedAt": { "type": "string", "format": "date-time" },
+    "normalization": { "$ref": "#/$defs/nonEmptyStrings" },
+    "redactions": { "$ref": "#/$defs/strings" },
+    "features": { "$ref": "#/$defs/nonEmptyStrings" },
+    "proves": { "$ref": "#/$defs/claimStages" },
+    "doesNotProve": { "$ref": "#/$defs/claimStages" },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind"],
+      "properties": {
+        "kind": {
+          "enum": ["local-observation", "vendored-source", "schema", "synthetic"]
+        },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "reference": { "type": "string" }
+      }
+    }
+  },
+  "$defs": {
+    "strings": {
+      "type": "array",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "nonEmptyStrings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "claimStages": {
+      "type": "array",
+      "items": {
+        "enum": [
+          "wire-shape",
+          "classification",
+          "archive-fidelity",
+          "native-discovery",
+          "native-load",
+          "native-reconstruction",
+          "native-append",
+          "semantic-translation",
+          "agent-code-consumer"
+        ]
+      },
+      "uniqueItems": true
+    }
+  }
+}

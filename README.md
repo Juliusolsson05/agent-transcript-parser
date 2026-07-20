@@ -55,8 +55,6 @@ console.log(projected.values)
 console.log(projected.report)
 ```
 
-`agent-transcript-parser/v2` exposes the same engine as a migration alias.
-
 ## Stable clone and rewind
 
 Analysis returns prompt addresses tied to provider-native source lines. Pass the
@@ -78,7 +76,7 @@ if (address) {
 
 ## Evidence and unknown data
 
-Checked-in fixtures under `fixtures/v2/` are privacy-reviewed, value-redacted
+Checked-in fixtures under `fixtures/evidence/` are privacy-reviewed, value-redacted
 structural reductions of observed transcripts. Each fixture carries a manifest
 that states what it proves and what it does not prove. Codex native-resume rules
 are also tied to a pinned upstream source commit; Claude native-resume support is
@@ -101,7 +99,7 @@ import {
 } from 'agent-transcript-parser/ghost'
 ```
 
-Ghost records are runtime artifacts, not durable conversation semantics. The v2
+Ghost records are runtime artifacts, not durable conversation semantics. The
 decoders recognize valid ghost markers without importing ghost implementation
 and exclude them from archive and native-resume projection. See
 [`docs/ghost.md`](./docs/ghost.md) for the frozen lifecycle contract.
@@ -122,18 +120,18 @@ Requires Node 20.19 or newer. ESM only.
 ## Layout
 
 ```text
-src/v2/                 evidence-driven engine
+src/                    evidence-driven engine
   claude/               Claude classifier, analysis, decoder, projectors
   codex/                Codex classifier, analysis, decoder, projectors
   conversation/         provider-neutral protocol
   operations/           stable addresses, clone, rewind
   projection/           shared projection contracts and provenance
   report/               explicit change reports
-src/ghost.ts             frozen ghost lifecycle
-src/ghost-sidecar.ts     minimal ghost-only wire vocabulary
-fixtures/v2/             reviewed evidence fixtures and manifests
-testing/v2/              unit and corpus contracts
-testing/corpus/          privacy-safe extraction and profiling tools
+  ghost.ts              frozen ghost lifecycle
+  ghost-sidecar.ts      minimal ghost-only wire vocabulary
+fixtures/evidence/      reviewed evidence fixtures and manifests
+testing/engine/         unit and corpus contracts
+testing/corpus/         privacy-safe extraction and profiling tools
 ```
 
 ## License
