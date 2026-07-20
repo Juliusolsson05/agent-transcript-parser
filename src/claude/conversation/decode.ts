@@ -20,14 +20,48 @@ export function decodeClaudeConversation(
     }
     const timestamp = stringField(record.raw, 'timestamp')
 
+    if (record.family === 'user-message' && record.raw.isCompactSummary === true) {
+      // WHY a compact summary is not a human turn: Claude persists one
+      // semantic compaction as a boundary followed by a user-shaped carrier.
+      // Promoting that carrier would both empty the compaction and replay its
+      // summary as a fresh request. Prefer the carrier text when present
+      // because it is the provider's explicit summary record, but keep the
+      // boundary as the source address for the single neutral entry.
+      const summary = textFromClaudeContent(record.message?.content)
+      for (let index = entries.length - 1; index >= 0; index -= 1) {
+        const candidate = entries[index]!
+        if (candidate.kind !== 'compaction' || candidate.summary.length > 0) continue
+        if (summary !== null) candidate.summary = summary
+        break
+      }
+      continue
+    }
+    if (record.family === 'user-message' && record.raw.isMeta === true) {
+      // WHY meta prompts stay archive-only: analysis deliberately excludes
+      // these transport records from user prompt addresses. Decoding them as
+      // ordinary messages would let duplicate/switch replay hidden provider
+      // instructions even though rewind never presents them to the user.
+      entries.push({ kind: 'opaque', nativeType: stringField(record.raw, 'type'), timestamp, source })
+      continue
+    }
     if (record.family === 'user-message' || record.family === 'assistant-message') {
       const role = record.family === 'user-message' ? 'user' as const : 'assistant' as const
-      const messageContent: ConversationContent[] = []
+      let messageContent: ConversationContent[] = []
+      const flushMessageContent = (): void => {
+        if (messageContent.length === 0) return
+        entries.push({ kind: 'message', role, content: messageContent, timestamp, source })
+        messageContent = []
+      }
       for (const block of record.blocks) {
         if (block.family === 'text') {
           const text = isRecord(block.raw) ? stringField(block.raw, 'text') : typeof block.raw === 'string' ? block.raw : null
           if (text !== null) messageContent.push({ kind: 'text', text })
         } else if (block.family === 'thinking' && isRecord(block.raw)) {
+          // WHY content is flushed at every semantic boundary: Claude allows
+          // text, thinking, tools, and media to coexist in one ordered block
+          // array. Buffering all text until the end moves narration across a
+          // tool invocation and changes the history that native resume sees.
+          flushMessageContent()
           entries.push({
             kind: 'reasoning',
             timestamp,
@@ -36,6 +70,7 @@ export function decodeClaudeConversation(
             encrypted: stringField(block.raw, 'signature'),
           })
         } else if (block.family === 'tool_use' && isRecord(block.raw)) {
+          flushMessageContent()
           entries.push({
             kind: 'tool-call',
             timestamp,
@@ -46,6 +81,7 @@ export function decodeClaudeConversation(
             nativeKind: 'tool_use',
           })
         } else if (block.family === 'tool_result' && isRecord(block.raw)) {
+          flushMessageContent()
           entries.push({
             kind: 'tool-result',
             timestamp,
@@ -63,16 +99,34 @@ export function decodeClaudeConversation(
           messageContent.push({ kind: 'opaque', nativeType: block.nativeType, value: block.raw })
         }
       }
-      if (messageContent.length > 0) entries.push({ kind: 'message', role, content: messageContent, timestamp, source })
+      flushMessageContent()
       continue
     }
     if (record.family === 'system' && record.subtype === 'compact_boundary') {
-      entries.push({ kind: 'compaction', summary: '', timestamp, source })
+      entries.push({ kind: 'compaction', summary: compactBoundarySummary(record.raw) ?? '', timestamp, source })
       continue
     }
     entries.push({ kind: 'opaque', nativeType: stringField(record.raw, 'type'), timestamp, source })
   }
   return { schemaVersion: 1, sourceProvider: 'claude', sourceSessionIds: [...sessionIds], entries }
+}
+
+function compactBoundarySummary(record: Record<string, unknown>): string | null {
+  const content = stringField(record, 'content')
+  if (content !== null) return content
+  const metadata = isRecord(record.compactMetadata) ? record.compactMetadata : null
+  return metadata ? stringField(metadata, 'message') : null
+}
+
+function textFromClaudeContent(content: unknown): string | null {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return null
+  const text = content
+    .filter(isRecord)
+    .filter(block => block.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text as string)
+    .join('\n')
+  return text.length > 0 ? text : null
 }
 
 export const claudeConversationDecoder: ConversationDecoder<'claude', ClaudeClassifiedRecord> = {

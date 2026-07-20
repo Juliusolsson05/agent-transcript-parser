@@ -70,4 +70,14 @@ describe('fingerprintJsonStructure', () => {
 
     expect(one.fingerprint).toBe(many.fingerprint)
   })
+
+  it('redacts unknown discriminator values used in array signatures', () => {
+    const secret = 'CUSTOMER_SECRET_KIND_41c9'
+    const result = fingerprintJsonStructure({ content: [{ type: secret, value: 'also private' }] })
+    const serialized = JSON.stringify(result)
+
+    expect(serialized).not.toContain(secret)
+    expect(serialized).not.toContain('also private')
+    expect(serialized).toContain('type=<other>')
+  })
 })

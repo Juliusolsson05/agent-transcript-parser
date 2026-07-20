@@ -19,6 +19,7 @@ import { validateRollout } from '../codex-validator/src/validate.js'
 import { translateNativeResume } from '../../src/translation/nativeResume.js'
 
 const sequences = new URL('../../fixtures/evidence/observed-sequences/', import.meta.url)
+const observed = new URL('../../fixtures/evidence/observed/', import.meta.url)
 const now = '2026-07-20T12:00:00.000Z'
 
 describe('native-resume projection over observed provider sequences', () => {
@@ -83,6 +84,79 @@ describe('native-resume projection over observed provider sequences', () => {
       expect(call.callId).toBe(output.callId)
     }
   })
+
+  it('decodes one Claude compaction without fabricating a user prompt', async () => {
+    const source = await fixture('claude-sequence-compaction')
+    const neutral = decodeClaudeConversation(classifyClaudeDocument(decodeJsonl(source)).records)
+    const compactions = neutral.entries.filter(entry => entry.kind === 'compaction')
+    const userMessages = neutral.entries.filter(entry => entry.kind === 'message' && entry.role === 'user')
+
+    expect(compactions).toHaveLength(1)
+    expect(compactions[0]).toMatchObject({ summary: 'fixture text' })
+    expect(userMessages).toEqual([])
+
+    const codex = projectCodexNativeResume(neutral, codexOptions())
+    const claude = projectClaudeNativeResume(neutral, claudeOptions())
+    expect(codex.values.find(value => value.type === 'compacted')).toMatchObject({
+      payload: { message: expect.stringContaining('fixture text') },
+    })
+    expect(codex.values.some(value => (
+      value.type === 'event_msg' && isRecord(value.payload) && value.payload.type === 'user_message'
+    ))).toBe(false)
+    expect(claude.values.map(value => value.type)).toEqual(['system', 'user'])
+    expect(claude.values[0]).toMatchObject({ content: 'fixture text' })
+    expect(claude.values[1]).toMatchObject({ isCompactSummary: true })
+  })
+
+  it('preserves Codex custom tool call wire kinds and opaque input', async () => {
+    const [call, output] = await Promise.all([
+      observedFixture('codex-payload-custom-tool-call'),
+      observedFixture('codex-payload-custom-tool-call-output'),
+    ])
+    const neutral = decodeCodexConversation(classifyCodexDocument(decodeJsonl(`${call}${output}`)).records)
+    const result = projectCodexNativeResume(neutral, codexOptions())
+    const items = result.values
+      .filter(value => value.type === 'response_item')
+      .map(value => value.payload)
+      .filter(isRecord)
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: 'custom_tool_call',
+      call_id: 'fixture-id-1',
+      input: 'fixture text',
+    }))
+    expect(items).toContainEqual(expect.objectContaining({
+      type: 'custom_tool_call_output',
+      call_id: 'fixture-id-1',
+    }))
+    expect(validateRollout(result.values)).toMatchObject({ ok: true, errorCount: 0 })
+  })
+
+  it('preserves a Codex local shell call instead of inventing a function name', async () => {
+    const call = await observedFixture('codex-payload-local-shell-call')
+    const output = JSON.stringify({
+      timestamp: now,
+      type: 'response_item',
+      payload: { type: 'function_call_output', call_id: 'fixture-id-1', output: 'done' },
+    })
+    const neutral = decodeCodexConversation(classifyCodexDocument(decodeJsonl(`${call}${output}\n`)).records)
+    const result = projectCodexNativeResume(neutral, codexOptions())
+    const items = result.values
+      .filter(value => value.type === 'response_item')
+      .map(value => value.payload)
+      .filter(isRecord)
+
+    expect(items).toContainEqual(expect.objectContaining({
+      type: 'local_shell_call',
+      call_id: 'fixture-id-1',
+      action: expect.objectContaining({ type: 'exec' }),
+    }))
+    expect(items).not.toContainEqual(expect.objectContaining({
+      type: 'function_call',
+      name: 'local_shell_call',
+    }))
+    expect(validateRollout(result.values)).toMatchObject({ ok: true, errorCount: 0 })
+  })
 })
 
 function codexOptions() {
@@ -108,6 +182,10 @@ function claudeOptions() {
 
 function fixture(caseId: string): Promise<string> {
   return readFile(new URL(`${caseId}/source.jsonl`, sequences), 'utf8')
+}
+
+function observedFixture(caseId: string): Promise<string> {
+  return readFile(new URL(`${caseId}/source.jsonl`, observed), 'utf8')
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

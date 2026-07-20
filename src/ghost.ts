@@ -459,6 +459,8 @@ export { ATP_KEY, ghostSidecar, isGhost, readSidecar, stripSidecar } from './gho
 export type {
   AtpGhostSidecar,
   ClaudeContentBlock,
+  ClaudeEntry,
+  ClaudeRole,
   ClaudeTextBlock,
   ClaudeThinkingBlock,
   ClaudeToolUseBlock,

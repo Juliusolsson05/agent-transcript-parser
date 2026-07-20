@@ -3,6 +3,7 @@ import type { ConversationEntry } from '../conversation/types.js'
 export interface ConversationToolPairing {
   pairedEntryIndexes: Set<number>
   unmatchedEntryIndexes: Set<number>
+  pairs: Array<{ callIndex: number; resultIndex: number }>
 }
 
 /**
@@ -17,6 +18,7 @@ export function pairConversationTools(
   const pendingCalls = new Map<string, number[]>()
   const pairedEntryIndexes = new Set<number>()
   const toolEntryIndexes = new Set<number>()
+  const pairs: ConversationToolPairing['pairs'] = []
 
   for (const [index, entry] of entries.entries()) {
     if (entry.kind === 'tool-call') {
@@ -33,6 +35,7 @@ export function pairConversationTools(
     if (callIndex === undefined) continue
     pairedEntryIndexes.add(callIndex)
     pairedEntryIndexes.add(index)
+    pairs.push({ callIndex, resultIndex: index })
   }
 
   return {
@@ -40,5 +43,6 @@ export function pairConversationTools(
     unmatchedEntryIndexes: new Set(
       [...toolEntryIndexes].filter(index => !pairedEntryIndexes.has(index)),
     ),
+    pairs,
   }
 }

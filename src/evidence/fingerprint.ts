@@ -173,14 +173,14 @@ export function fingerprintJsonStructure(
         const signature = shallowKindSignature(item)
         if (!representatives.has(signature)) representatives.set(signature, item)
       }
-      for (const [signature, item] of [...representatives].sort(([a], [b]) => a.localeCompare(b))) {
+      for (const [signature, item] of [...representatives].sort(([a], [b]) => compareText(a, b))) {
         visit(item, `${path}[]:${signature}`, depth + 1)
       }
       return
     }
 
     if (!isRecord(current)) return
-    for (const [rawKey, child] of Object.entries(current).sort(([a], [b]) => a.localeCompare(b))) {
+    for (const [rawKey, child] of Object.entries(current).sort(([a], [b]) => compareText(a, b))) {
       const key = safeStructuralKey(rawKey) ? rawKey : `<dynamic-${jsonKind(child)}-key>`
       visit(child, `${path}.${key}`, depth + 1, rawKey)
     }
@@ -220,8 +220,11 @@ function shallowKindSignature(value: unknown): string {
   const kind = jsonKind(value)
   if (!isRecord(value)) return kind
   const discriminators = Object.entries(value)
-    .filter(([key, child]) => safeStructuralDiscriminator(key, child) !== undefined)
-    .map(([key, child]) => `${key}=${String(child)}`)
+    .map(([key, child]) => {
+      const discriminator = safeStructuralDiscriminator(key, child)
+      return discriminator === undefined ? null : `${key}=${discriminator}`
+    })
+    .filter((value): value is string => value !== null)
     .sort()
   return discriminators.length > 0 ? `${kind}(${discriminators.join(',')})` : kind
 }
@@ -240,8 +243,15 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function compareNodes(a: StructuralShapeNode, b: StructuralShapeNode): number {
-  return a.path.localeCompare(b.path) || a.kind.localeCompare(b.kind) ||
-    (a.discriminator ?? '').localeCompare(b.discriminator ?? '')
+  return compareText(a.path, b.path) || compareText(a.kind, b.kind) ||
+    compareText(a.discriminator ?? '', b.discriminator ?? '')
+}
+
+function compareText(a: string, b: string): number {
+  // WHY fingerprints avoid localeCompare: locale/ICU data is host-dependent,
+  // while these hashes are persisted evidence coordinates that must remain
+  // byte-identical across Node versions and operating systems.
+  return a < b ? -1 : a > b ? 1 : 0
 }
 
 /**

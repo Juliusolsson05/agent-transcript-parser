@@ -65,6 +65,8 @@ export function projectClaudeNativeResume(
   let pendingAssistant: Array<ConversationMessage | ConversationToolCall | Extract<ConversationEntry, { kind: 'reasoning' }>> = []
   let pendingResults: ConversationToolResult[] = []
   const toolPairing = pairConversationTools(conversation.entries)
+  const nonAdjacentToolEntries = invalidClaudeToolPairEntries(conversation.entries, toolPairing.pairs)
+  const preserveNativeContent = conversation.sourceProvider === TARGET
 
   const emit = (entry: ConversationEntry, suffix: string, partial: Record<string, unknown>): string => {
     const uuid = makeId(`${options.targetSessionId}:resume:${sequence}:${suffix}`)
@@ -93,7 +95,7 @@ export function projectClaudeNativeResume(
     let hasToolCall = false
     for (const entry of pendingAssistant) {
       const before = blocks.length
-      if (entry.kind === 'message') blocks.push(...claudeMessageContent(entry, changes))
+      if (entry.kind === 'message') blocks.push(...claudeMessageContent(entry, changes, preserveNativeContent))
       else if (entry.kind === 'reasoning') {
         blocks.push({
           type: 'thinking',
@@ -157,12 +159,17 @@ export function projectClaudeNativeResume(
   }
 
   for (const [entryIndex, entry] of conversation.entries.entries()) {
-    if (toolPairing.unmatchedEntryIndexes.has(entryIndex)) {
+    if (toolPairing.unmatchedEntryIndexes.has(entryIndex) || nonAdjacentToolEntries.has(entryIndex)) {
+      const nonAdjacent = nonAdjacentToolEntries.has(entryIndex)
       changes.push(claudeChange(
         entry,
         'dropped',
-        `native-resume.${entry.kind}.unmatched-dropped`,
-        `Dropped an unmatched ${entry.kind} so Claude does not synthesize or remove history during resume.`,
+        nonAdjacent
+          ? `native-resume.${entry.kind}.non-adjacent-dropped`
+          : `native-resume.${entry.kind}.unmatched-dropped`,
+        nonAdjacent
+          ? `Dropped a ${entry.kind} whose call cycle crosses a user or compaction boundary that Claude cannot resume natively.`
+          : `Dropped an unmatched ${entry.kind} so Claude does not synthesize or remove history during resume.`,
       ))
       continue
     }
@@ -191,7 +198,7 @@ export function projectClaudeNativeResume(
         continue
       }
       flush()
-      const content = claudeMessageContent(entry, changes)
+      const content = claudeMessageContent(entry, changes, preserveNativeContent)
       if (content.length === 0) {
         changes.push(claudeChange(
           entry,
@@ -267,6 +274,7 @@ function claudeUserContent(content: unknown[]): unknown {
 function claudeMessageContent(
   entry: ConversationMessage,
   changes: ProjectionChange[],
+  preserveNativeContent: boolean,
 ): unknown[] {
   const content: unknown[] = []
   for (const item of entry.content) {
@@ -278,6 +286,15 @@ function claudeMessageContent(
       content.push({ ...item.value })
       continue
     }
+    if (preserveNativeContent && item.kind === 'opaque' && isRecord(item.value)) {
+      // WHY same-provider duplication may retain an unknown block that the
+      // installed provider already wrote and loaded successfully. Cross-
+      // provider projection still drops it because the target has no evidence
+      // for that wire shape, but deleting it from a same-provider clone is a
+      // silent semantic regression from the former retargeting path.
+      content.push({ ...item.value })
+      continue
+    }
     changes.push(claudeChange(
       entry,
       'dropped',
@@ -286,6 +303,25 @@ function claudeMessageContent(
     ))
   }
   return content
+}
+
+function invalidClaudeToolPairEntries(
+  entries: readonly ConversationEntry[],
+  pairs: ReadonlyArray<{ callIndex: number; resultIndex: number }>,
+): Set<number> {
+  const invalid = new Set<number>()
+  for (const pair of pairs) {
+    const crossesNativeBoundary = entries
+      .slice(pair.callIndex + 1, pair.resultIndex)
+      .some(entry => (
+        entry.kind === 'compaction' ||
+        (entry.kind === 'message' && entry.role === 'user')
+      ))
+    if (!crossesNativeBoundary) continue
+    invalid.add(pair.callIndex)
+    invalid.add(pair.resultIndex)
+  }
+  return invalid
 }
 
 function preserved(entry: ConversationEntry, kind: string): ProjectionChange {

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
+import { analyzeClaudeTranscript } from '../../src/claude/analyze/analyze.js'
 import { classifyClaudeRecord } from '../../src/claude/classify/classify.js'
+import { decodeClaudeConversation } from '../../src/claude/conversation/decode.js'
 import { classifyCodexRecord } from '../../src/codex/classify/classify.js'
 
 describe('provider classification', () => {
@@ -29,5 +31,28 @@ describe('provider classification', () => {
 
     expect(result.family).toBe('assistant-message')
     expect(result.diagnostics).toContain('Top-level type assistant does not match message role user.')
+  })
+
+  it('keeps Claude meta prompts out of durable conversation semantics', () => {
+    const record = classifyClaudeRecord({
+      type: 'user',
+      isMeta: true,
+      message: { role: 'user', content: [{ type: 'text', text: 'hidden provider instruction' }] },
+    }, 3)
+
+    expect(analyzeClaudeTranscript([record]).prompts).toEqual([])
+    expect(decodeClaudeConversation([record]).entries).toEqual([
+      expect.objectContaining({ kind: 'opaque', source: expect.objectContaining({ line: 3 }) }),
+    ])
+  })
+
+  it('does not offer a malformed text block that the decoder cannot resolve', () => {
+    const record = classifyClaudeRecord({
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'text' }] },
+    }, 4)
+
+    expect(analyzeClaudeTranscript([record]).prompts).toEqual([])
+    expect(decodeClaudeConversation([record]).entries).toEqual([])
   })
 })

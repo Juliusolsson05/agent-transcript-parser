@@ -57,7 +57,8 @@ describe('archive projection over observed provider sequences', () => {
       expect(call.callId).toBe(result.callId)
       expect(call.name).toBe('FixtureName')
     }
-    expect(archive.report.counts.dropped).toBe(0)
+    expect(archive.report.changes.filter(change => change.kind === 'dropped').map(change => change.code))
+      .toEqual(['archive.source-session-meta.dropped'])
   })
 
   it('preserves every same-provider observed Codex record before retargeting identity', async () => {

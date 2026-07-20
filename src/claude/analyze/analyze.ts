@@ -1,9 +1,15 @@
 import type { TranscriptGraphAnalysis, TranscriptInvariantDiagnostic } from '../../analysis/types.js'
 import type { ClaudePromptAddress, PromptReference } from '../../operations/promptAddress.js'
+import { isGhostRuntimeArtifact } from '../../runtimeArtifact.js'
 import type { ClaudeClassifiedRecord } from '../classify/types.js'
 
 export function analyzeClaudeTranscript(records: readonly ClaudeClassifiedRecord[]): TranscriptGraphAnalysis {
-  const sessionIds = uniqueStrings(records.map(record => stringField(record.raw, 'sessionId')))
+  // WHY analysis must share the decoder's ghost boundary: repeated snapshots
+  // of one provisional ghost intentionally reuse a deterministic uuid. Treating
+  // them as durable records creates false duplicate-id and dangling-parent
+  // diagnostics even though projection correctly ignores every ghost.
+  const durableRecords = records.filter(record => !isGhostRuntimeArtifact(record.raw))
+  const sessionIds = uniqueStrings(durableRecords.map(record => stringField(record.raw, 'sessionId')))
   const diagnostics: TranscriptInvariantDiagnostic[] = []
   const prompts: Array<PromptReference<ClaudePromptAddress>> = []
   const ids = new Map<string, number>()
@@ -13,7 +19,7 @@ export function analyzeClaudeTranscript(records: readonly ClaudeClassifiedRecord
   const boundaries: number[] = []
   const summaries: number[] = []
 
-  for (const record of records) {
+  for (const record of durableRecords) {
     const uuid = stringField(record.raw, 'uuid')
     if (uuid) {
       const previous = ids.get(uuid)
@@ -114,7 +120,9 @@ function containsHumanPromptContent(content: unknown): boolean {
   // delivery as a user-role message. Counting that record produces rewind
   // anchors the human never saw as prompts. Text and user-supplied media are
   // prompt-bearing; a tool-result-only envelope is continuation plumbing.
-  return content.some(block =>
-    isRecord(block) && ['text', 'image', 'document'].includes(String(block.type)),
-  )
+  return content.some(block => {
+    if (!isRecord(block)) return false
+    if (block.type === 'text') return typeof block.text === 'string' && block.text.trim().length > 0
+    return block.type === 'image' || block.type === 'document'
+  })
 }

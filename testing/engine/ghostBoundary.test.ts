@@ -57,6 +57,25 @@ describe('frozen ghost boundary', () => {
     expect(conversation.entries).toEqual([])
     expect(projectedStrings(conversation)).not.toContain('provisional-turn')
   })
+
+  it('does not report deterministic ghost snapshots as duplicate durable ids', () => {
+    const ghost = {
+      type: 'assistant',
+      uuid: 'g-provisional-turn-0',
+      parentUuid: 'missing-provisional-parent',
+      sessionId: 'source',
+      timestamp: '2026-07-20T12:00:00.000Z',
+      message: { role: 'assistant', content: [{ type: 'text', text: 'provisional' }] },
+      _atp: marker,
+    }
+    const classified = classifyClaudeDocument(decodeJsonl(
+      `${JSON.stringify(ghost)}\n${JSON.stringify({ ...ghost, _atp: { ...marker, updatedAt: 120 } })}\n`,
+    ))
+    const analysis = analyzeClaudeTranscript(classified.records)
+
+    expect(analysis.sessionIds).toEqual([])
+    expect(analysis.diagnostics).toEqual([])
+  })
 })
 
 function projectedStrings(conversation: ReturnType<typeof decodeClaudeConversation>): string {

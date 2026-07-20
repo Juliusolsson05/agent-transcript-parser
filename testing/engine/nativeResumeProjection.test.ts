@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
+import { classifyClaudeRecord } from '../../src/claude/classify/classify.js'
+import { decodeClaudeConversation } from '../../src/claude/conversation/decode.js'
 import { projectClaudeNativeResume } from '../../src/claude/project/nativeResume.js'
 import { projectCodexNativeResume } from '../../src/codex/project/nativeResume.js'
 import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
@@ -170,6 +172,138 @@ describe('native-resume projection is distinct from archive projection', () => {
     expect(claude.report.changes.map(change => change.code)).toContain(
       'native-resume.tool-call.unmatched-dropped',
     )
+  })
+
+  it('preserves mixed Claude block order through neutral and native projection', () => {
+    const neutral = decodeClaudeConversation([
+      classifyClaudeRecord({
+        type: 'assistant',
+        uuid: 'assistant-1',
+        sessionId: 'source',
+        timestamp: now,
+        message: {
+          role: 'assistant',
+          content: [
+            { type: 'text', text: 'before' },
+            { type: 'thinking', thinking: 'reason' },
+            { type: 'text', text: 'after' },
+            { type: 'tool_use', id: 'call-1', name: 'Read', input: {} },
+          ],
+        },
+      }, 0),
+      classifyClaudeRecord({
+        type: 'user',
+        uuid: 'result-1',
+        parentUuid: 'assistant-1',
+        sessionId: 'source',
+        timestamp: now,
+        message: {
+          role: 'user',
+          content: [{ type: 'tool_result', tool_use_id: 'call-1', content: 'done' }],
+        },
+      }, 1),
+    ])
+
+    expect(neutral.entries.map(entry => entry.kind)).toEqual([
+      'message',
+      'reasoning',
+      'message',
+      'tool-call',
+      'tool-result',
+    ])
+    const claude = projectClaudeNativeResume(neutral, {
+      targetSessionId: 'claude-target',
+      now,
+      cwd: '/fixture/project',
+      version: 'fixture',
+      model: 'fixture',
+    })
+    expect(claude.values[0]?.message).toMatchObject({
+      content: [
+        { type: 'text', text: 'before' },
+        { type: 'thinking', thinking: 'reason' },
+        { type: 'text', text: 'after' },
+        { type: 'tool_use', id: 'call-1' },
+      ],
+    })
+  })
+
+  it('drops a tool cycle that crosses a user boundary instead of writing invalid Claude history', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'future-provider',
+      sourceSessionIds: [],
+      entries: [
+        { kind: 'tool-call', callId: 'c1', name: 'Read', input: {}, nativeKind: 'future', ...source(0, {}) },
+        { kind: 'message', role: 'user', content: [{ kind: 'text', text: 'interrupt' }], ...source(1, {}) },
+        { kind: 'tool-result', callId: 'c1', output: 'late', isError: false, nativeKind: 'future', ...source(2, {}) },
+      ],
+    }
+    const result = projectClaudeNativeResume(document, {
+      targetSessionId: 'claude-target',
+      now,
+      cwd: '/fixture/project',
+      version: 'fixture',
+      model: 'fixture',
+    })
+
+    expect(result.values).toHaveLength(1)
+    expect(result.values[0]).toMatchObject({ type: 'user', message: { content: 'interrupt' } })
+    expect(result.report.changes.filter(change => change.code.includes('non-adjacent'))).toHaveLength(2)
+  })
+
+  it('trims reasoning that becomes the Codex response-item tail', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [
+        { kind: 'message', role: 'user', content: [{ kind: 'text', text: 'work' }], ...source(0, {}) },
+        { kind: 'reasoning', text: 'unfinished', encrypted: 'cipher', ...source(1, {}) },
+        { kind: 'tool-call', callId: 'orphan', name: 'apply_patch', input: 'patch', nativeKind: 'custom_tool_call', ...source(2, {}) },
+      ],
+    }
+    const result = projectCodexNativeResume(document, {
+      targetSessionId: 'codex-target',
+      now,
+      cwd: '/fixture/project',
+      cliVersion: 'fixture',
+      modelProvider: 'openai',
+      model: 'fixture',
+    })
+
+    expect(result.values.some(value => (
+      value.type === 'response_item' && (value.payload as { type?: string }).type === 'reasoning'
+    ))).toBe(false)
+    expect(result.report.changes.map(change => change.code)).toContain('native-resume.reasoning.trailing-dropped')
+  })
+
+  it('retains unknown same-provider message blocks but drops them cross-provider', () => {
+    const entry: ConversationEntry = {
+      kind: 'message',
+      role: 'assistant',
+      content: [{ kind: 'opaque', nativeType: 'future_block', value: { type: 'future_block', payload: 'kept' } }],
+      ...source(0, {}),
+    }
+    const sameProvider = projectClaudeNativeResume({
+      schemaVersion: 1,
+      sourceProvider: 'claude',
+      sourceSessionIds: ['source'],
+      entries: [entry],
+    }, {
+      targetSessionId: 'claude-target', now, cwd: '/fixture/project', version: 'fixture', model: 'fixture',
+    })
+    const crossProvider = projectClaudeNativeResume({
+      schemaVersion: 1,
+      sourceProvider: 'future-provider',
+      sourceSessionIds: [],
+      entries: [entry],
+    }, {
+      targetSessionId: 'claude-target', now, cwd: '/fixture/project', version: 'fixture', model: 'fixture',
+    })
+
+    expect(sameProvider.values[0]?.message).toMatchObject({ content: [{ type: 'future_block', payload: 'kept' }] })
+    expect(crossProvider.values).toEqual([])
   })
 })
 

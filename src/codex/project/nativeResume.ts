@@ -73,6 +73,8 @@ export function projectCodexNativeResume(
   let turnIndex = 0
   let openTurn: { id: string; lastAgentMessage: string } | null = null
   const toolPairing = pairConversationTools(conversation.entries)
+  const trailingReasoning = trailingReasoningEntryIndexes(conversation.entries, toolPairing.unmatchedEntryIndexes)
+  const preserveNativeKinds = conversation.sourceProvider === TARGET
 
   const closeTurn = (timestamp: string): void => {
     if (!openTurn) return
@@ -96,6 +98,15 @@ export function projectCodexNativeResume(
         'dropped',
         `native-resume.${entry.kind}.unmatched-dropped`,
         `Dropped an unmatched ${entry.kind} so Codex does not repair the history differently on load.`,
+      ))
+      continue
+    }
+    if (trailingReasoning.has(entryIndex)) {
+      changes.push(codexChange(
+        entry,
+        'dropped',
+        'native-resume.reasoning.trailing-dropped',
+        'Dropped trailing reasoning that has no following model output and cannot be replayed by Codex.',
       ))
       continue
     }
@@ -126,7 +137,7 @@ export function projectCodexNativeResume(
       continue
     }
     if (entry.kind === 'message') {
-      const content = codexNativeContent(entry, changes)
+      const content = codexNativeContent(entry, changes, preserveNativeKinds)
       if (content.length === 0) {
         changes.push(codexChange(
           entry,
@@ -200,7 +211,7 @@ export function projectCodexNativeResume(
       changes.push(preserved(entry, 'message'))
       continue
     }
-    values.push(projectNonMessage(entry, timestamp))
+    values.push(projectNonMessage(entry, timestamp, preserveNativeKinds))
     changes.push(preserved(entry, entry.kind))
     if (entry.kind === 'tool-result' && entry.isError !== null) {
       changes.push(codexChange(
@@ -222,8 +233,40 @@ export function projectCodexNativeResume(
   }
 }
 
-function projectNonMessage(entry: Exclude<ConversationEntry, { kind: 'message' | 'opaque' | 'compaction' }>, timestamp: string): Record<string, unknown> {
+function projectNonMessage(
+  entry: Exclude<ConversationEntry, { kind: 'message' | 'opaque' | 'compaction' }>,
+  timestamp: string,
+  preserveNativeKinds: boolean,
+): Record<string, unknown> {
   if (entry.kind === 'tool-call') {
+    const nativePayload = isRecord(entry.source.raw.payload) ? entry.source.raw.payload : null
+    if (preserveNativeKinds && entry.nativeKind === 'custom_tool_call') {
+      return {
+        timestamp,
+        type: 'response_item',
+        payload: {
+          type: 'custom_tool_call',
+          call_id: entry.callId,
+          name: entry.name,
+          input: jsonText(entry.input),
+          ...(typeof nativePayload?.status === 'string' ? { status: nativePayload.status } : {}),
+        },
+      }
+    }
+    if (preserveNativeKinds && entry.nativeKind === 'local_shell_call') {
+      const action = isRecord(entry.input) ? { ...entry.input } : entry.input
+      if (isRecord(action) && action.env === null) action.env = {}
+      return {
+        timestamp,
+        type: 'response_item',
+        payload: {
+          type: 'local_shell_call',
+          call_id: entry.callId,
+          status: typeof nativePayload?.status === 'string' ? nativePayload.status : 'completed',
+          action,
+        },
+      }
+    }
     return {
       timestamp,
       type: 'response_item',
@@ -232,14 +275,27 @@ function projectNonMessage(entry: Exclude<ConversationEntry, { kind: 'message' |
         name: entry.name,
         arguments: jsonText(entry.input),
         call_id: entry.callId,
+        ...(preserveNativeKinds && typeof nativePayload?.namespace === 'string'
+          ? { namespace: nativePayload.namespace }
+          : {}),
       },
     }
   }
   if (entry.kind === 'tool-result') {
+    const nativePayload = isRecord(entry.source.raw.payload) ? entry.source.raw.payload : null
+    const nativeOutputKind = preserveNativeKinds && (
+      entry.nativeKind === 'custom_tool_call_output' ||
+      entry.nativeKind === 'local_shell_call_output'
+    ) ? entry.nativeKind : 'function_call_output'
     return {
       timestamp,
       type: 'response_item',
-      payload: { type: 'function_call_output', call_id: entry.callId, output: jsonText(entry.output) },
+      payload: {
+        type: nativeOutputKind,
+        call_id: entry.callId,
+        output: jsonText(entry.output),
+        ...(typeof nativePayload?.name === 'string' ? { name: nativePayload.name } : {}),
+      },
     }
   }
   return {
@@ -256,6 +312,7 @@ function projectNonMessage(entry: Exclude<ConversationEntry, { kind: 'message' |
 function codexNativeContent(
   entry: ConversationMessage,
   changes: ProjectionChange[],
+  preserveNativeContent: boolean,
 ): Record<string, unknown>[] {
   const content: Record<string, unknown>[] = []
   for (const item of entry.content) {
@@ -268,6 +325,13 @@ function codexNativeContent(
       content.push(image)
       continue
     }
+    if (preserveNativeContent && item.kind === 'opaque' && isRecord(item.value)) {
+      // WHY same-provider duplication trusts a content block the source Codex
+      // already persisted. Cross-provider input remains evidence-gated, but a
+      // native Codex clone must not erase future/extension message content.
+      content.push({ ...item.value })
+      continue
+    }
     changes.push(codexChange(
       entry,
       'dropped',
@@ -276,6 +340,27 @@ function codexNativeContent(
     ))
   }
   return content
+}
+
+function trailingReasoningEntryIndexes(
+  entries: readonly ConversationEntry[],
+  unmatchedToolEntries: ReadonlySet<number>,
+): Set<number> {
+  const trailing = new Set<number>()
+  // WHY opaque event-plane records and dangling tools do not terminate the
+  // scan: neither is emitted into the response-item history. After those are
+  // removed, an encrypted reasoning item may become the effective tail—the
+  // exact mid-turn snapshot the former host sanitizer trimmed before resume.
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]!
+    if (unmatchedToolEntries.has(index) || entry.kind === 'opaque') continue
+    if (entry.kind === 'reasoning') {
+      trailing.add(index)
+      continue
+    }
+    break
+  }
+  return trailing
 }
 
 function codexImage(content: ConversationContent): Record<string, unknown> | null {

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
+import { classifyClaudeRecord } from '../../src/claude/classify/classify.js'
+import { decodeClaudeConversation } from '../../src/claude/conversation/decode.js'
 import { claudeArchiveProjector, projectClaudeArchive } from '../../src/claude/project/index.js'
+import { classifyCodexRecord } from '../../src/codex/classify/classify.js'
+import { decodeCodexConversation } from '../../src/codex/conversation/decode.js'
 import { codexArchiveProjector, projectCodexArchive } from '../../src/codex/project/index.js'
 import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
 import type { ArchiveProjector } from '../../src/projection/types.js'
@@ -155,6 +159,31 @@ describe('provider-independent archive projection', () => {
     const archive = result.values.at(-1)?.payload
     expect(archive).toMatchObject({ source_omitted: true })
     expect(archive).not.toHaveProperty('source')
+  })
+
+  it('keeps repeated cross-provider archives flat and record-count stable', () => {
+    let document = conversation('claude')
+    const sizes: number[] = []
+    const counts: number[] = []
+
+    for (let iteration = 0; iteration < 6; iteration += 1) {
+      const codex = projectCodexArchive(document, { targetSessionId: 'codex-target', now })
+      sizes.push(JSON.stringify(codex.values).length)
+      counts.push(codex.values.length)
+      document = decodeCodexConversation(codex.values.map((value, line) => classifyCodexRecord(value, line)))
+
+      const claude = projectClaudeArchive(document, {
+        targetSessionId: 'claude-target',
+        now,
+        idFactory: seed => `id:${seed}`,
+      })
+      document = decodeClaudeConversation(claude.values.map((value, line) => classifyClaudeRecord(value, line)))
+    }
+
+    expect(new Set(counts)).toEqual(new Set([7]))
+    expect(new Set(sizes).size).toBe(1)
+    const provenanceMarkers = JSON.stringify(document).match(/source_provider/g) ?? []
+    expect(provenanceMarkers.length).toBeLessThanOrEqual(document.entries.length)
   })
 })
 

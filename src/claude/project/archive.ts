@@ -44,6 +44,21 @@ export function projectClaudeArchive(
   const createId = options.idFactory ?? archiveId
 
   for (const [index, entry] of conversation.entries.entries()) {
+    if (entry.kind === 'opaque' && entry.nativeType === 'session_meta') {
+      // WHY Codex discovery metadata is not conversation history: the target
+      // projector owns its own session identity. Archiving source session_meta
+      // as an opaque Claude record makes one extra carrier accumulate on every
+      // alternating Claude↔Codex archive pass.
+      changes.push(archiveChange(
+        entry,
+        TARGET,
+        'dropped',
+        'archive.source-session-meta.dropped',
+        'Dropped source-provider session discovery metadata that the target regenerates.',
+        [CLAUDE_ARCHIVE_EVIDENCE],
+      ))
+      continue
+    }
     const uuid = createId(`${options.targetSessionId}:archive:${index}`)
     values.push(projectEntry(entry, options, uuid, parentUuid))
     const isOpaque = entry.kind === 'opaque'
