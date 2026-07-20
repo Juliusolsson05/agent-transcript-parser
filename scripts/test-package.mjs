@@ -22,10 +22,18 @@ function collectEntrypoints(value, entries) {
 }
 
 const required = new Set(extraFiles)
+const importableEntrypoints = new Set()
 collectEntrypoints(manifest.main, required)
 collectEntrypoints(manifest.types, required)
 collectEntrypoints(manifest.exports, required)
 collectEntrypoints(manifest.bin, required)
+
+for (const exported of Object.values(manifest.exports ?? {})) {
+  if (typeof exported === 'string') importableEntrypoints.add(exported.replace(/^\.\//, ''))
+  else if (exported && typeof exported.default === 'string') {
+    importableEntrypoints.add(exported.default.replace(/^\.\//, ''))
+  }
+}
 
 const packResult = JSON.parse(execFileSync(
   'npm',
@@ -51,11 +59,11 @@ for (const file of required) {
   if (!packed.has(file)) failures.push(`${file} is missing from npm pack output`)
 }
 
-if (manifest.main) {
+for (const entrypoint of importableEntrypoints) {
   try {
-    await import(pathToFileURL(join(root, manifest.main)).href)
+    await import(pathToFileURL(join(root, entrypoint)).href)
   } catch (error) {
-    failures.push(`public main entry point cannot be imported: ${error instanceof Error ? error.message : String(error)}`)
+    failures.push(`public entry point ${entrypoint} cannot be imported: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
