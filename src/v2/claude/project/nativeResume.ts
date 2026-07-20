@@ -201,7 +201,19 @@ export function projectClaudeNativeResume(
         ))
         continue
       }
-      emit(entry, 'user', { type: 'user', message: { role: 'user', content } })
+      emit(entry, 'user', {
+        type: 'user',
+        message: {
+          role: 'user',
+          // WHY plain human prompts use Claude's scalar wire shape even though
+          // a one-element text-block array is semantically equivalent: the
+          // native resume discovery path extracts the first prompt before it
+          // loads the conversation, and current Claude releases do not index
+          // the array form as an ordinary resumable prompt. Block arrays stay
+          // necessary for images/documents and therefore remain the fallback.
+          content: claudeUserContent(content),
+        },
+      })
       changes.push(preserved(entry, 'message'))
       continue
     }
@@ -243,6 +255,13 @@ export function projectClaudeNativeResume(
     values,
     report: createProjectionReport('native-resume', conversation.sourceProvider, TARGET, changes),
   }
+}
+
+function claudeUserContent(content: unknown[]): unknown {
+  if (content.length !== 1) return content
+  const only = content[0]
+  if (!isRecord(only) || only.type !== 'text' || typeof only.text !== 'string') return content
+  return only.text
 }
 
 function claudeMessageContent(
