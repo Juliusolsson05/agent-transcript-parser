@@ -4,6 +4,7 @@ import type {
   ConversationEntry,
   ConversationMessage,
 } from '../../conversation/types.js'
+import type { EvidenceClaim } from '../../evidence/claim.js'
 import { archiveProvenance } from '../../projection/archiveProvenance.js'
 import {
   archiveChange,
@@ -21,6 +22,11 @@ import type {
 import { createProjectionReport, type ProjectionChange } from '../../report/types.js'
 
 const TARGET = 'codex' as const
+const CODEX_ARCHIVE_EVIDENCE: EvidenceClaim = {
+  provenance: 'human-reviewed-semantics',
+  rule: 'codex-archive-projection',
+  profile: { provider: TARGET },
+}
 
 export const codexArchiveProjector: ArchiveProjector<typeof TARGET> = {
   provider: TARGET,
@@ -35,12 +41,14 @@ export function projectCodexArchive(
   if (sameProvider) return preserveCodexArchive(conversation, sameProvider, options)
 
   const values: Record<string, unknown>[] = [sessionMeta(options)]
-  const changes: ProjectionChange[] = [synthesizedArchiveChange(
+  const metaChange = synthesizedArchiveChange(
     conversation.sourceProvider,
     TARGET,
     'archive.session-meta.synthesized',
     'Synthesized the target Codex archive identity record.',
-  )]
+  )
+  metaChange.evidence.push(CODEX_ARCHIVE_EVIDENCE)
+  const changes: ProjectionChange[] = [metaChange]
 
   for (const entry of conversation.entries) {
     values.push(projectEntry(entry, options))
@@ -60,6 +68,7 @@ export function projectCodexArchive(
         : isDemotedMessage
           ? 'Preserved non-native message content in an archive-only content block.'
           : `Preserved the neutral ${entry.kind} semantics in a Codex archive record.`,
+      [CODEX_ARCHIVE_EVIDENCE],
     ))
   }
 
@@ -87,7 +96,8 @@ function preserveCodexArchive(
           TARGET,
           'retargeted',
           'archive.same-provider.session-retargeted',
-          'Retargeted the Codex session metadata while retaining its remaining wire fields.',
+            'Retargeted the Codex session metadata while retaining its remaining wire fields.',
+            [CODEX_ARCHIVE_EVIDENCE],
         ))
       }
     }
@@ -98,17 +108,20 @@ function preserveCodexArchive(
       'preserved',
       'archive.same-provider.raw-preserved',
       'Preserved the original Codex record rather than reconstructing it from neutral semantics.',
+      [CODEX_ARCHIVE_EVIDENCE],
     ))
   }
 
   if (!foundSessionMeta) {
     values.unshift(sessionMeta(options))
-    changes.unshift(synthesizedArchiveChange(
+    const metaChange = synthesizedArchiveChange(
       conversation.sourceProvider,
       TARGET,
       'archive.session-meta.synthesized',
       'Synthesized missing Codex session metadata for the archive.',
-    ))
+    )
+    metaChange.evidence.push(CODEX_ARCHIVE_EVIDENCE)
+    changes.unshift(metaChange)
   }
   return archiveResult(conversation, values, changes)
 }

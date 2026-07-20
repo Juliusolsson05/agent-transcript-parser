@@ -3,6 +3,7 @@ import type {
   ConversationDocument,
   ConversationEntry,
 } from '../../conversation/types.js'
+import type { EvidenceClaim } from '../../evidence/claim.js'
 import { archiveProvenance } from '../../projection/archiveProvenance.js'
 import {
   archiveChange,
@@ -19,6 +20,11 @@ import type {
 import { createProjectionReport, type ProjectionChange } from '../../report/types.js'
 
 const TARGET = 'claude' as const
+const CLAUDE_ARCHIVE_EVIDENCE: EvidenceClaim = {
+  provenance: 'human-reviewed-semantics',
+  rule: 'claude-archive-projection',
+  profile: { provider: TARGET },
+}
 
 export const claudeArchiveProjector: ArchiveProjector<typeof TARGET> = {
   provider: TARGET,
@@ -60,6 +66,7 @@ export function projectClaudeArchive(
         : isDemotedMessage
           ? 'Preserved a non-native message as an archive-only Claude record.'
           : `Preserved the neutral ${entry.kind} semantics in a Claude archive record.`,
+      [CLAUDE_ARCHIVE_EVIDENCE],
     ))
     parentUuid = uuid
   }
@@ -86,6 +93,7 @@ function preserveClaudeArchive(
         'retargeted',
         'archive.same-provider.session-retargeted',
         'Retargeted the Claude session id while retaining its remaining wire fields.',
+        [CLAUDE_ARCHIVE_EVIDENCE],
       ))
     }
     changes.push(archiveChange(
@@ -94,6 +102,7 @@ function preserveClaudeArchive(
       'preserved',
       'archive.same-provider.raw-preserved',
       'Preserved the original Claude record rather than reconstructing it from neutral semantics.',
+      [CLAUDE_ARCHIVE_EVIDENCE],
     ))
   }
   return archiveResult(conversation, values, changes)

@@ -1,4 +1,5 @@
 import type { ConversationDocument, ConversationEntry } from '../conversation/types.js'
+import type { EvidenceClaim } from '../evidence/claim.js'
 import type { ProjectionChange, ProjectionChangeKind } from '../report/types.js'
 
 export function archiveChange(
@@ -7,6 +8,7 @@ export function archiveChange(
   kind: ProjectionChangeKind,
   code: string,
   message: string,
+  targetEvidence: readonly EvidenceClaim[] = [],
 ): ProjectionChange {
   return {
     kind,
@@ -15,7 +17,7 @@ export function archiveChange(
     targetProvider,
     code,
     message,
-    evidence: entry.source.evidence,
+    evidence: [...entry.source.evidence, ...targetEvidence],
   }
 }
 

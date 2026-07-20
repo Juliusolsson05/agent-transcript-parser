@@ -37,3 +37,44 @@ export interface ArchiveProjector<TProvider extends string = string> {
     options: ArchiveProjectionOptions,
   ): ArchiveProjectionResult<TProvider>
 }
+
+export interface NativeResumeProfile<TProvider extends string = string> {
+  id: string
+  provider: TProvider
+  /** A resume guarantee is only as broad as the evidence coordinate here. */
+  evidence: {
+    sourceCommit?: string
+    cliVersion?: string
+    observedAt?: string
+  }
+}
+
+export interface NativeResumeProjectionResult<
+  TProvider extends string = string,
+  TProfile extends NativeResumeProfile<TProvider> = NativeResumeProfile<TProvider>,
+> {
+  profile: 'native-resume'
+  targetProvider: TProvider
+  providerProfile: TProfile
+  values: Record<string, unknown>[]
+  report: ProjectionReport & { profile: 'native-resume'; targetProvider: TProvider }
+}
+
+/**
+ * Resume projectors intentionally do not extend ArchiveProjector. Keeping the
+ * methods and result discriminants separate prevents a fidelity-oriented
+ * archive—with unknown extension records—from being passed to a native CLI by
+ * accident merely because both operations happen to emit JSON objects.
+ */
+export interface NativeResumeProjector<
+  TProvider extends string,
+  TOptions extends ProjectionBaseOptions,
+  TProfile extends NativeResumeProfile<TProvider>,
+> {
+  readonly provider: TProvider
+  readonly profile: TProfile
+  projectNativeResume(
+    conversation: ConversationDocument,
+    options: TOptions,
+  ): NativeResumeProjectionResult<TProvider, TProfile>
+}
