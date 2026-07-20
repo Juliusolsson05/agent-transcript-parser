@@ -1,5 +1,6 @@
 import type { ConversationContent, ConversationDocument, ConversationEntry } from '../../conversation/types.js'
 import type { ConversationDecoder } from '../../conversation/decoder.js'
+import { isGhostRuntimeArtifact } from '../../runtimeArtifact.js'
 import type { CodexClassifiedRecord } from '../classify/types.js'
 
 const CALL_TYPES = new Set(['function_call', 'custom_tool_call', 'local_shell_call'])
@@ -9,6 +10,7 @@ export function decodeCodexConversation(records: readonly CodexClassifiedRecord[
   const entries: ConversationEntry[] = []
   const sessionIds = new Set<string>()
   for (const record of records) {
+    if (isGhostRuntimeArtifact(record.raw)) continue
     const source = { provider: 'codex' as const, line: record.line, raw: record.raw, evidence: record.evidence }
     const timestamp = stringField(record.raw, 'timestamp')
     if (record.family === 'session-meta') {

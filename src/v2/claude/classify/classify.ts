@@ -1,4 +1,5 @@
 import type { RawJsonlDocument } from '../../jsonl/types.js'
+import { isGhostRuntimeArtifact } from '../../runtimeArtifact.js'
 import type { EvidenceClaim } from '../../evidence/claim.js'
 import type {
   ClaudeClassificationResult,
@@ -76,6 +77,11 @@ export function classifyClaudeDocument(document: RawJsonlDocument): ClaudeClassi
 
 export function classifyClaudeRecord(value: unknown, line = 0): ClaudeClassifiedRecord {
   if (!isRecord(value)) return opaque(value, line, null, ['Expected a JSON object.'])
+  if (isGhostRuntimeArtifact(value)) {
+    return opaque(value, line, typeof value.type === 'string' ? value.type : null, [
+      'Provisional ghost record is outside durable transcript semantics.',
+    ])
+  }
   const type = typeof value.type === 'string' ? value.type : null
   const facts = type ? [`record:${type}`] : []
   const evidence = type ? [observed(`record:${type}`)] : []

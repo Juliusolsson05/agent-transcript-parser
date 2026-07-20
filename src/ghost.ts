@@ -42,9 +42,9 @@
 //     the freshest one by `updatedAt`. No in-place mutation, no file
 //     rewrites, no lock files.
 //
-//  3. Converters (`toClaude`, `toCodex`) SKIP ghosts. They are a runtime
-//     artifact. Exporting a transcript that contains ghosts to the other
-//     provider would embed placeholders into durable history — wrong.
+//  3. V2 decoders SKIP valid ghosts before semantic conversation decoding.
+//     They are a runtime artifact. Projecting one into durable provider
+//     history would turn a provisional observation into a false fact.
 //
 //  4. Reconciliation is consumer-driven. atp ships a reference merger
 //     (`mergeWithUpstream`) that handles the common cases, but the library
@@ -55,15 +55,14 @@
 //     library; it must read sensibly to a consumer that has never heard of
 //     the specific headless package, provider package, or UI shell on top.
 
-import { ATP_KEY } from './types.js'
+import { ATP_KEY, ghostSidecar, isGhost } from './ghost-sidecar.js'
 import type {
   AtpGhostSidecar,
   ClaudeContentBlock,
   ClaudeEntry,
   ClaudeRole,
   GhostEntry,
-} from './types.js'
-import { ghostSidecar, isGhost } from './sidecar.js'
+} from './ghost-sidecar.js'
 
 // -----------------------------------------------------------------------------
 // ghostUuid — deterministic id scheme
@@ -456,11 +455,12 @@ export function mergeWithUpstream<T extends { uuid?: string } = ClaudeEntry>(
 // Re-exported here so consumers importing from `./ghost` get the full
 // working set without a second import from `./sidecar`. The originals
 // still live next to the other sidecar utilities for discoverability.
-export { ghostSidecar, isGhost } from './sidecar.js'
+export { ATP_KEY, ghostSidecar, isGhost, readSidecar, stripSidecar } from './ghost-sidecar.js'
 export type {
+  AtpGhostSidecar,
   ClaudeContentBlock,
   ClaudeTextBlock,
   ClaudeThinkingBlock,
   ClaudeToolUseBlock,
   GhostEntry,
-} from './types.js'
+} from './ghost-sidecar.js'

@@ -1,5 +1,6 @@
 import type { ConversationContent, ConversationDocument, ConversationEntry } from '../../conversation/types.js'
 import type { ConversationDecoder } from '../../conversation/decoder.js'
+import { isGhostRuntimeArtifact } from '../../runtimeArtifact.js'
 import type { ClaudeClassifiedRecord } from '../classify/types.js'
 
 export function decodeClaudeConversation(
@@ -8,6 +9,7 @@ export function decodeClaudeConversation(
   const entries: ConversationEntry[] = []
   const sessionIds = new Set<string>()
   for (const record of records) {
+    if (isGhostRuntimeArtifact(record.raw)) continue
     const sessionId = stringField(record.raw, 'sessionId')
     if (sessionId) sessionIds.add(sessionId)
     const source = {

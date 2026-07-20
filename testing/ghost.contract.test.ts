@@ -11,15 +11,8 @@ import {
   supersedeGhost,
   updateGhost,
 } from '../src/ghost.js'
-import {
-  ghostSidecar,
-  isGhost,
-  readSidecar,
-  stripSidecar,
-} from '../src/sidecar.js'
-import { toClaude } from '../src/toClaude.js'
-import { toCodex } from '../src/toCodex.js'
-import type { ClaudeEntry, GhostEntry } from '../src/types.js'
+import { ghostSidecar, isGhost, readSidecar, stripSidecar } from '../src/ghost-sidecar.js'
+import type { ClaudeEntry, GhostEntry } from '../src/ghost-sidecar.js'
 
 // Ghost is deliberately frozen during the transcript-engine rewrite. These
 // tests characterize its existing public behavior at the boundary consumed by
@@ -137,14 +130,6 @@ describe('frozen ghost contract', () => {
     expect(ghost).toHaveProperty('_atp')
   })
 
-  it('never exports provisional ghosts into either durable provider format', () => {
-    const ghost = fixtureGhost('turn', 0, 100, 'must stay provisional')
-    expect(toCodex([ghost], { targetSessionId: 'target' })).toEqual([])
-    // The legacy Codex decoder checks the sidecar before provider dispatch, so
-    // the same tagged JSON object is skipped even though createGhost returns
-    // the Claude-native carrier shape used by Agent Code.
-    expect(toClaude([ghost as never])).toEqual([])
-  })
 })
 
 function fixtureGhost(

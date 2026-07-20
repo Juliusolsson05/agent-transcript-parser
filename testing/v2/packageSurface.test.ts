@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import * as root from '../../src/index.js'
 import * as v2 from '../../src/v2/index.js'
 
 describe('v2 package composition surface', () => {
@@ -14,5 +15,12 @@ describe('v2 package composition surface', () => {
     expect(v2.translateNativeResume).toBeTypeOf('function')
     expect(v2.cloneForNativeResume).toBeTypeOf('function')
     expect(v2.rewindForNativeResume).toBeTypeOf('function')
+  })
+
+  it('backs the root API with v2 while keeping ghost behind its subpath', () => {
+    expect(root.translateNativeResume).toBe(v2.translateNativeResume)
+    expect(root.rewindConversation).toBe(v2.rewindConversation)
+    expect('toClaude' in root).toBe(false)
+    expect('createGhost' in root).toBe(false)
   })
 })
