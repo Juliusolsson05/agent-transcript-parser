@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "caseId": "claude-message-block-tool-result",
+  "description": "Value-redacted observation of message-block:tool_result.",
+  "provider": "claude",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "claude",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T17:51:18.986Z",
+  "normalization": [
+    "Selected the smallest observed record in the family.",
+    "Pseudonymized scalar values while preserving reviewed schema discriminators.",
+    "Deduplicated repeated array element structures."
+  ],
+  "redactions": [
+    "Prompts, model output, commands, tool output, paths, URLs, ids, and timestamps.",
+    "Unsafe or dynamic object keys."
+  ],
+  "features": [
+    "message-block:tool_result"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "ca9c6f71dac1f75efdb34c0c3e80a79cff5ac9e4c4a9b976be81daa0c8505645",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "caseId": "codex-payload-function-call",
+  "description": "Value-redacted observation of payload:function_call.",
+  "provider": "codex",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "codex",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T17:51:18.986Z",
+  "normalization": [
+    "Selected the smallest observed record in the family.",
+    "Pseudonymized scalar values while preserving reviewed schema discriminators.",
+    "Deduplicated repeated array element structures."
+  ],
+  "redactions": [
+    "Prompts, model output, commands, tool output, paths, URLs, ids, and timestamps.",
+    "Unsafe or dynamic object keys."
+  ],
+  "features": [
+    "payload:function_call"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "6de5557971b3c596eed95cdee0af33be566acdfb129664e704f3358eab35f735",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

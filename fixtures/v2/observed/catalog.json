@@ -1,0 +1,650 @@
+{
+  "schemaVersion": 1,
+  "generatedAt": "2026-07-20T17:51:18.986Z",
+  "summary": {
+    "files": 3315,
+    "bytes": 4279081955,
+    "records": 1287223,
+    "malformedLines": 100,
+    "candidates": 91
+  },
+  "families": [
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-document",
+      "feature": "message-block:document",
+      "records": 6,
+      "files": 6
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-fallback",
+      "feature": "message-block:fallback",
+      "records": 5,
+      "files": 5
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-image",
+      "feature": "message-block:image",
+      "records": 35,
+      "files": 28
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-text",
+      "feature": "message-block:text",
+      "records": 53178,
+      "files": 1559
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-thinking",
+      "feature": "message-block:thinking",
+      "records": 31957,
+      "files": 1238
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-tool-result",
+      "feature": "message-block:tool_result",
+      "records": 82454,
+      "files": 1628
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-block-tool-use",
+      "feature": "message-block:tool_use",
+      "records": 81233,
+      "files": 1629
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-role-assistant",
+      "feature": "message-role:assistant",
+      "records": 146495,
+      "files": 1750
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-message-role-user",
+      "feature": "message-role:user",
+      "records": 97306,
+      "files": 1780
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-agent-name",
+      "feature": "record:agent-name",
+      "records": 1,
+      "files": 1
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-ai-title",
+      "feature": "record:ai-title",
+      "records": 6621,
+      "files": 275
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-assistant",
+      "feature": "record:assistant",
+      "records": 146495,
+      "files": 1750
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-attachment",
+      "feature": "record:attachment",
+      "records": 14377,
+      "files": 1646
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-file-history-delta",
+      "feature": "record:file-history-delta",
+      "records": 305,
+      "files": 23
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-file-history-snapshot",
+      "feature": "record:file-history-snapshot",
+      "records": 14473,
+      "files": 406
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-frame-link",
+      "feature": "record:frame-link",
+      "records": 8,
+      "files": 3
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-last-prompt",
+      "feature": "record:last-prompt",
+      "records": 11086,
+      "files": 439
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-mode",
+      "feature": "record:mode",
+      "records": 7187,
+      "files": 309
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-permission-mode",
+      "feature": "record:permission-mode",
+      "records": 13424,
+      "files": 416
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-pr-link",
+      "feature": "record:pr-link",
+      "records": 4709,
+      "files": 60
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-queue-operation",
+      "feature": "record:queue-operation",
+      "records": 3358,
+      "files": 195
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-relocated",
+      "feature": "record:relocated",
+      "records": 31,
+      "files": 2
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-result",
+      "feature": "record:result",
+      "records": 440,
+      "files": 11
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-started",
+      "feature": "record:started",
+      "records": 571,
+      "files": 13
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-system",
+      "feature": "record:system",
+      "records": 40587,
+      "files": 410
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-user",
+      "feature": "record:user",
+      "records": 97306,
+      "files": 1780
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-record-worktree-state",
+      "feature": "record:worktree-state",
+      "records": 153,
+      "files": 3
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-api-error",
+      "feature": "subtype:api_error",
+      "records": 189,
+      "files": 25
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-away-summary",
+      "feature": "subtype:away_summary",
+      "records": 40,
+      "files": 20
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-codex-event-msg",
+      "feature": "subtype:codex_event_msg",
+      "records": 36125,
+      "files": 68
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-codex-session-meta",
+      "feature": "subtype:codex_session_meta",
+      "records": 58,
+      "files": 58
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-codex-turn-context",
+      "feature": "subtype:codex_turn_context",
+      "records": 870,
+      "files": 68
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-compact-boundary",
+      "feature": "subtype:compact_boundary",
+      "records": 182,
+      "files": 81
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-informational",
+      "feature": "subtype:informational",
+      "records": 6,
+      "files": 4
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-local-command",
+      "feature": "subtype:local_command",
+      "records": 65,
+      "files": 31
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-model-consent-fallback",
+      "feature": "subtype:model_consent_fallback",
+      "records": 5,
+      "files": 5
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-model-refusal-fallback",
+      "feature": "subtype:model_refusal_fallback",
+      "records": 6,
+      "files": 5
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-scheduled-task-fire",
+      "feature": "subtype:scheduled_task_fire",
+      "records": 40,
+      "files": 7
+    },
+    {
+      "provider": "claude",
+      "caseId": "claude-subtype-turn-duration",
+      "feature": "subtype:turn_duration",
+      "records": 3001,
+      "files": 345
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-action-exec",
+      "feature": "action:exec",
+      "records": 469,
+      "files": 5
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-action-find-in-page",
+      "feature": "action:find_in_page",
+      "records": 135,
+      "files": 47
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-action-open-page",
+      "feature": "action:open_page",
+      "records": 548,
+      "files": 100
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-action-other",
+      "feature": "action:other",
+      "records": 141,
+      "files": 38
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-action-search",
+      "feature": "action:search",
+      "records": 897,
+      "files": 131
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-agent-message",
+      "feature": "payload:agent_message",
+      "records": 56457,
+      "files": 1425
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-agent-reasoning",
+      "feature": "payload:agent_reasoning",
+      "records": 317,
+      "files": 10
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-block-encrypted-content",
+      "feature": "payload-block:encrypted_content",
+      "records": 452,
+      "files": 79
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-block-input-image",
+      "feature": "payload-block:input_image",
+      "records": 2,
+      "files": 1
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-block-input-text",
+      "feature": "payload-block:input_text",
+      "records": 23510,
+      "files": 1511
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-block-output-text",
+      "feature": "payload-block:output_text",
+      "records": 53380,
+      "files": 1427
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-collab-agent-interaction-end",
+      "feature": "payload:collab_agent_interaction_end",
+      "records": 10,
+      "files": 4
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-collab-agent-spawn-end",
+      "feature": "payload:collab_agent_spawn_end",
+      "records": 23,
+      "files": 5
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-collab-close-end",
+      "feature": "payload:collab_close_end",
+      "records": 8,
+      "files": 4
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-collab-waiting-end",
+      "feature": "payload:collab_waiting_end",
+      "records": 18,
+      "files": 5
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-context-compacted",
+      "feature": "payload:context_compacted",
+      "records": 1088,
+      "files": 278
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-custom-tool-call",
+      "feature": "payload:custom_tool_call",
+      "records": 39889,
+      "files": 882
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-custom-tool-call-output",
+      "feature": "payload:custom_tool_call_output",
+      "records": 39877,
+      "files": 877
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-error",
+      "feature": "payload:error",
+      "records": 37,
+      "files": 13
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-exec-command-end",
+      "feature": "payload:exec_command_end",
+      "records": 26872,
+      "files": 156
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-function-call",
+      "feature": "payload:function_call",
+      "records": 130553,
+      "files": 923
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-function-call-output",
+      "feature": "payload:function_call_output",
+      "records": 130987,
+      "files": 923
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-local-shell-call",
+      "feature": "payload:local_shell_call",
+      "records": 469,
+      "files": 5
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-mcp-tool-call-end",
+      "feature": "payload:mcp_tool_call_end",
+      "records": 7333,
+      "files": 117
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-message",
+      "feature": "payload:message",
+      "records": 76351,
+      "files": 1511
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-patch-apply-end",
+      "feature": "payload:patch_apply_end",
+      "records": 16846,
+      "files": 376
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-reasoning",
+      "feature": "payload:reasoning",
+      "records": 91692,
+      "files": 1395
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-role-assistant",
+      "feature": "payload-role:assistant",
+      "records": 53380,
+      "files": 1427
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-role-developer",
+      "feature": "payload-role:developer",
+      "records": 3640,
+      "files": 1485
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-role-user",
+      "feature": "payload-role:user",
+      "records": 19331,
+      "files": 1511
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-sub-agent-activity",
+      "feature": "payload:sub_agent_activity",
+      "records": 1516,
+      "files": 77
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-task-complete",
+      "feature": "payload:task_complete",
+      "records": 11217,
+      "files": 1265
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-task-started",
+      "feature": "payload:task_started",
+      "records": 12546,
+      "files": 1497
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-thread-goal-updated",
+      "feature": "payload:thread_goal_updated",
+      "records": 1,
+      "files": 1
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-thread-name-updated",
+      "feature": "payload:thread_name_updated",
+      "records": 25,
+      "files": 1
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-thread-rolled-back",
+      "feature": "payload:thread_rolled_back",
+      "records": 90,
+      "files": 76
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-thread-settings-applied",
+      "feature": "payload:thread_settings_applied",
+      "records": 2368,
+      "files": 120
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-token-count",
+      "feature": "payload:token_count",
+      "records": 208630,
+      "files": 1469
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-tool-search-call",
+      "feature": "payload:tool_search_call",
+      "records": 10,
+      "files": 5
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-tool-search-output",
+      "feature": "payload:tool_search_output",
+      "records": 10,
+      "files": 5
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-turn-aborted",
+      "feature": "payload:turn_aborted",
+      "records": 634,
+      "files": 212
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-user-message",
+      "feature": "payload:user_message",
+      "records": 15330,
+      "files": 1505
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-web-search-call",
+      "feature": "payload:web_search_call",
+      "records": 586,
+      "files": 81
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-payload-web-search-end",
+      "feature": "payload:web_search_end",
+      "records": 1144,
+      "files": 135
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-atp-passthrough",
+      "feature": "record:atp_passthrough",
+      "records": 34290,
+      "files": 104
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-compacted",
+      "feature": "record:compacted",
+      "records": 1280,
+      "files": 316
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-event-msg",
+      "feature": "record:event_msg",
+      "records": 361971,
+      "files": 1512
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-inter-agent-communication-metadata",
+      "feature": "record:inter_agent_communication_metadata",
+      "records": 539,
+      "files": 82
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-response-item",
+      "feature": "record:response_item",
+      "records": 510963,
+      "files": 1511
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-session-meta",
+      "feature": "record:session_meta",
+      "records": 1609,
+      "files": 1514
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-turn-context",
+      "feature": "record:turn_context",
+      "records": 13796,
+      "files": 1501
+    },
+    {
+      "provider": "codex",
+      "caseId": "codex-record-world-state",
+      "feature": "record:world_state",
+      "records": 1643,
+      "files": 666
+    }
+  ]
+}

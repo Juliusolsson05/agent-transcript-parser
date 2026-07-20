@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "caseId": "claude-message-block-thinking",
+  "description": "Value-redacted observation of message-block:thinking.",
+  "provider": "claude",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "claude",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T17:51:18.986Z",
+  "normalization": [
+    "Selected the smallest observed record in the family.",
+    "Pseudonymized scalar values while preserving reviewed schema discriminators.",
+    "Deduplicated repeated array element structures."
+  ],
+  "redactions": [
+    "Prompts, model output, commands, tool output, paths, URLs, ids, and timestamps.",
+    "Unsafe or dynamic object keys."
+  ],
+  "features": [
+    "message-block:thinking"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "5a01a4c895ba7ed55f900c9b12c97bef80c673ae0ab50882966999f251f680f6",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

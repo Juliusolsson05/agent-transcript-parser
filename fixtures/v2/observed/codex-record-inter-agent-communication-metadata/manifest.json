@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "caseId": "codex-record-inter-agent-communication-metadata",
+  "description": "Value-redacted observation of record:inter_agent_communication_metadata.",
+  "provider": "codex",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "codex",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-07-20T17:51:18.986Z",
+  "normalization": [
+    "Selected the smallest observed record in the family.",
+    "Pseudonymized scalar values while preserving reviewed schema discriminators.",
+    "Deduplicated repeated array element structures."
+  ],
+  "redactions": [
+    "Prompts, model output, commands, tool output, paths, URLs, ids, and timestamps.",
+    "Unsafe or dynamic object keys."
+  ],
+  "features": [
+    "record:inter_agent_communication_metadata"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "8dd7fae948897e4f5783a89069ffe2787c59bbc357e626f056722e14142ef4da",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

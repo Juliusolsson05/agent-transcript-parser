@@ -1,0 +1,1 @@
+{"payload":{"content":[{"text":"fixture text","type":"input_text"},{"image_url":"https://example.invalid/fixture","type":"input_image"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}

@@ -97,6 +97,7 @@ const SAFE_DISCRIMINATOR_VALUES = new Set([
   'system',
   'task_complete',
   'task_started',
+  'text',
   'thinking',
   'thread_goal_updated',
   'thread_name_updated',
@@ -160,7 +161,7 @@ export function fingerprintJsonStructure(
     }
 
     const kind = jsonKind(current)
-    const discriminator = safeDiscriminator(fieldName, current)
+    const discriminator = safeStructuralDiscriminator(fieldName, current)
     if (!append({ path, kind, ...(discriminator ? { discriminator } : {}) })) return
 
     if (Array.isArray(current)) {
@@ -199,7 +200,10 @@ export function fingerprintJsonStructure(
   }
 }
 
-function safeDiscriminator(fieldName: string | undefined, value: unknown): string | undefined {
+export function safeStructuralDiscriminator(
+  fieldName: string | undefined,
+  value: unknown,
+): string | undefined {
   if (!fieldName || !SAFE_DISCRIMINATORS.has(fieldName)) return undefined
   if (typeof value !== 'string') return undefined
   return SAFE_DISCRIMINATOR_VALUES.has(value) ? value : '<other>'
@@ -216,7 +220,7 @@ function shallowKindSignature(value: unknown): string {
   const kind = jsonKind(value)
   if (!isRecord(value)) return kind
   const discriminators = Object.entries(value)
-    .filter(([key, child]) => safeDiscriminator(key, child) !== undefined)
+    .filter(([key, child]) => safeStructuralDiscriminator(key, child) !== undefined)
     .map(([key, child]) => `${key}=${String(child)}`)
     .sort()
   return discriminators.length > 0 ? `${kind}(${discriminators.join(',')})` : kind

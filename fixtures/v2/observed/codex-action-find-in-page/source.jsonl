@@ -1,0 +1,1 @@
+{"payload":{"action":{"pattern":"fixture text","type":"find_in_page","url":"https://example.invalid/fixture"},"status":"completed","type":"web_search_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}

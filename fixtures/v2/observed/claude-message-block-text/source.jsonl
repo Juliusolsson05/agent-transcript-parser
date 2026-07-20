@@ -1,0 +1,1 @@
+{"cwd":"/fixture/project","entrypoint":"fixture text","gitBranch":"fixture-branch","isMeta":true,"isSidechain":false,"message":{"content":[{"text":"fixture text","type":"text"}],"role":"user"},"parentUuid":"fixture-id-1","sessionId":"fixture-id-2","timestamp":"2026-01-01T00:00:00.000Z","type":"user","userType":"fixture text","uuid":"fixture-id-3","version":"0.0.0-fixture"}
