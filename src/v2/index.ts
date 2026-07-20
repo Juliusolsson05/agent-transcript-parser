@@ -1,3 +1,6 @@
+export * from './claude/classify/index.js'
+export * from './codex/classify/index.js'
+export type { EvidenceClaim } from './evidence/claim.js'
 export * from './evidence/types.js'
 export { fingerprintJsonStructure } from './evidence/fingerprint.js'
 export * from './jsonl/index.js'
