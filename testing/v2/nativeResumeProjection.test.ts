@@ -131,6 +131,46 @@ describe('native-resume projection is distinct from archive projection', () => {
     ])
     expect(claude.values[1]).toMatchObject({ isCompactSummary: true })
   })
+
+  it('drops unmatched tool plumbing before either provider can repair it differently', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'future-provider',
+      sourceSessionIds: [],
+      entries: [{
+        kind: 'tool-call',
+        callId: 'orphan',
+        name: 'Read',
+        input: {},
+        nativeKind: 'future-call',
+        ...source(0, { type: 'source-call' }),
+      }],
+    }
+    const codex = projectCodexNativeResume(document, {
+      targetSessionId: 'codex-target',
+      now,
+      cwd: '/fixture/project',
+      cliVersion: '0.144.6',
+      modelProvider: 'openai',
+      model: 'gpt-5',
+    })
+    const claude = projectClaudeNativeResume(document, {
+      targetSessionId: 'claude-target',
+      now,
+      cwd: '/fixture/project',
+      version: '2.1.215',
+      model: 'claude-fixture',
+    })
+
+    expect(codex.values.map(value => value.type)).toEqual(['session_meta'])
+    expect(claude.values).toEqual([])
+    expect(codex.report.changes.map(change => change.code)).toContain(
+      'native-resume.tool-call.unmatched-dropped',
+    )
+    expect(claude.report.changes.map(change => change.code)).toContain(
+      'native-resume.tool-call.unmatched-dropped',
+    )
+  })
 })
 
 function conversation(): ConversationDocument {

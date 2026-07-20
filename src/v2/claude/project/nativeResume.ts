@@ -15,6 +15,7 @@ import type {
   NativeResumeProjector,
   ProjectionBaseOptions,
 } from '../../projection/types.js'
+import { pairConversationTools } from '../../projection/toolPairs.js'
 import { createProjectionReport, type ProjectionChange } from '../../report/types.js'
 
 const TARGET = 'claude' as const
@@ -63,6 +64,7 @@ export function projectClaudeNativeResume(
   let sequence = 0
   let pendingAssistant: Array<ConversationMessage | ConversationToolCall | Extract<ConversationEntry, { kind: 'reasoning' }>> = []
   let pendingResults: ConversationToolResult[] = []
+  const toolPairing = pairConversationTools(conversation.entries)
 
   const emit = (entry: ConversationEntry, suffix: string, partial: Record<string, unknown>): string => {
     const uuid = makeId(`${options.targetSessionId}:resume:${sequence}:${suffix}`)
@@ -154,7 +156,16 @@ export function projectClaudeNativeResume(
     flushResults()
   }
 
-  for (const entry of conversation.entries) {
+  for (const [entryIndex, entry] of conversation.entries.entries()) {
+    if (toolPairing.unmatchedEntryIndexes.has(entryIndex)) {
+      changes.push(claudeChange(
+        entry,
+        'dropped',
+        `native-resume.${entry.kind}.unmatched-dropped`,
+        `Dropped an unmatched ${entry.kind} so Claude does not synthesize or remove history during resume.`,
+      ))
+      continue
+    }
     if (entry.kind === 'opaque') {
       changes.push(claudeChange(
         entry,

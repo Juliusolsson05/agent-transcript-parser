@@ -16,6 +16,7 @@ import type {
   NativeResumeProjector,
   ProjectionBaseOptions,
 } from '../../projection/types.js'
+import { pairConversationTools } from '../../projection/toolPairs.js'
 import { createProjectionReport, type ProjectionChange } from '../../report/types.js'
 
 const TARGET = 'codex' as const
@@ -71,6 +72,7 @@ export function projectCodexNativeResume(
   const makeId = options.idFactory ?? archiveId
   let turnIndex = 0
   let openTurn: { id: string; lastAgentMessage: string } | null = null
+  const toolPairing = pairConversationTools(conversation.entries)
 
   const closeTurn = (timestamp: string): void => {
     if (!openTurn) return
@@ -86,8 +88,17 @@ export function projectCodexNativeResume(
     openTurn = null
   }
 
-  for (const entry of conversation.entries) {
+  for (const [entryIndex, entry] of conversation.entries.entries()) {
     const timestamp = entry.timestamp ?? options.now
+    if (toolPairing.unmatchedEntryIndexes.has(entryIndex)) {
+      changes.push(codexChange(
+        entry,
+        'dropped',
+        `native-resume.${entry.kind}.unmatched-dropped`,
+        `Dropped an unmatched ${entry.kind} so Codex does not repair the history differently on load.`,
+      ))
+      continue
+    }
     if (entry.kind === 'opaque') {
       changes.push(codexChange(
         entry,

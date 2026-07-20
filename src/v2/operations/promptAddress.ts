@@ -1,17 +1,17 @@
-export interface ClaudePromptAddress {
-  provider: 'claude'
+export interface PromptAddress {
+  provider: string
   line: number
   sessionId: string | null
+}
+
+export interface ClaudePromptAddress extends PromptAddress {
+  provider: 'claude'
   uuid: string | null
 }
 
-export interface CodexPromptAddress {
+export interface CodexPromptAddress extends PromptAddress {
   provider: 'codex'
-  line: number
-  sessionId: string | null
 }
-
-export type PromptAddress = ClaudePromptAddress | CodexPromptAddress
 
 export interface PromptReference<TAddress extends PromptAddress = PromptAddress> {
   address: TAddress
@@ -27,5 +27,15 @@ export interface PromptReference<TAddress extends PromptAddress = PromptAddress>
 export function samePromptAddress(a: PromptAddress, b: PromptAddress): boolean {
   if (a.provider !== b.provider) return false
   if (a.line !== b.line || a.sessionId !== b.sessionId) return false
-  return a.provider === 'codex' || (b.provider === 'claude' && a.uuid === b.uuid)
+  // Claude carries an additional native record id. Other providers can use the
+  // universal provider/session/line coordinate without editing this function;
+  // provider-specific resolvers remain free to add stronger checks later.
+  if (a.provider !== 'claude' || b.provider !== 'claude') return true
+  return claudeUuid(a) === claudeUuid(b)
+}
+
+function claudeUuid(address: PromptAddress): string | null | undefined {
+  return 'uuid' in address && (typeof address.uuid === 'string' || address.uuid === null)
+    ? address.uuid
+    : undefined
 }
