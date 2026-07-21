@@ -97,8 +97,14 @@ describe('native-resume projection over observed provider sequences', () => {
 
     const codex = projectCodexNativeResume(neutral, codexOptions())
     const claude = projectClaudeNativeResume(neutral, claudeOptions())
-    expect(codex.values.find(value => value.type === 'compacted')).toMatchObject({
-      payload: { message: expect.stringContaining('fixture text') },
+    expect(codex.values.find(value => (
+      value.type === 'response_item' &&
+      isRecord(value.payload) &&
+      value.payload.role === 'developer'
+    ))).toMatchObject({
+      payload: {
+        content: [{ type: 'input_text', text: expect.stringContaining('fixture text') }],
+      },
     })
     expect(codex.values.some(value => (
       value.type === 'event_msg' && isRecord(value.payload) && value.payload.type === 'user_message'
