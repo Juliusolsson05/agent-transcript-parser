@@ -121,6 +121,35 @@ export function projectCodexNativeResume(
     }
     if (entry.kind === 'compaction') {
       closeTurn(timestamp)
+      if (conversation.sourceProvider !== TARGET) {
+        // WHY a foreign plaintext summary cannot masquerade as Codex's native
+        // `compacted` record: current Codex rollouts replace history with a
+        // provider-authenticated encrypted compaction item. A structurally
+        // plausible plaintext replacement_history loads without an error but
+        // is ignored when the next API request is built—the translated session
+        // then claims it has no prior work. A developer handoff message is an
+        // ordinary supported history item, so Codex actually sends the summary
+        // while still making clear that it is context, not a new user request.
+        values.push({
+          timestamp,
+          type: 'response_item',
+          payload: {
+            type: 'message',
+            role: 'developer',
+            content: [{
+              type: 'input_text',
+              text: `${SUMMARY_PREFIX}\n${entry.summary}`,
+            }],
+          },
+        })
+        changes.push(codexChange(
+          entry,
+          'demoted',
+          'native-resume.compaction.foreign-summary-demoted',
+          'Projected a foreign plaintext compaction as a portable developer handoff because Codex native compaction is provider-encrypted.',
+        ))
+        continue
+      }
       values.push({
         timestamp,
         type: 'compacted',

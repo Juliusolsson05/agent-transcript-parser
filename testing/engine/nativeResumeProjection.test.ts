@@ -125,7 +125,18 @@ describe('native-resume projection is distinct from archive projection', () => {
       model: 'claude-fixture',
     })
 
-    expect(codex.values.map(value => value.type)).toEqual(['session_meta', 'compacted'])
+    expect(codex.values.map(value => value.type)).toEqual(['session_meta', 'response_item'])
+    expect(codex.values[1]).toMatchObject({
+      payload: {
+        type: 'message',
+        role: 'developer',
+        content: [{ type: 'input_text', text: expect.stringContaining('keep this context') }],
+      },
+    })
+    expect(codex.report.changes).toContainEqual(expect.objectContaining({
+      code: 'native-resume.compaction.foreign-summary-demoted',
+      kind: 'demoted',
+    }))
     expect(validateRollout(codex.values)).toMatchObject({ ok: true, errorCount: 0 })
     expect(claude.values.map(value => [value.type, value.subtype])).toEqual([
       ['system', 'compact_boundary'],
