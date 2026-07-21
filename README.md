@@ -176,8 +176,10 @@ sequentially because every case makes a real provider request. Projected files
 and any resume forks are removed by default; pass `--keep` to retain a failed
 case for manual diagnosis.
 
-`npm run check` type-checks the probe separately even though it is not included
-in the published `dist/` package.
+Inside an Agent Code checkout, run `npm run typecheck:probe` to type-check the
+optional harness against the sibling headless packages. The standalone package
+gate excludes that host-only harness, and the published `dist/` remains free of
+headless or Agent Code dependencies.
 
 Requires Node 20.19 or newer. ESM only.
 
