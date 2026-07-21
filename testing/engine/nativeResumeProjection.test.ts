@@ -145,6 +145,33 @@ describe('native-resume projection is distinct from archive projection', () => {
     expect(claude.values[1]).toMatchObject({ isCompactSummary: true })
   })
 
+  it('prefers Claude compact-summary carrier text over its boundary placeholder', () => {
+    const neutral = decodeClaudeConversation([
+      classifyClaudeRecord({
+        type: 'system',
+        subtype: 'compact_boundary',
+        content: 'Conversation compacted',
+        sessionId: 'source',
+        timestamp: now,
+      }, 0),
+      classifyClaudeRecord({
+        type: 'user',
+        isCompactSummary: true,
+        sessionId: 'source',
+        timestamp: now,
+        message: {
+          role: 'user',
+          content: 'Detailed portable summary of the actual work.',
+        },
+      }, 1),
+    ])
+
+    expect(neutral.entries).toEqual([expect.objectContaining({
+      kind: 'compaction',
+      summary: 'Detailed portable summary of the actual work.',
+    })])
+  })
+
   it('drops unmatched tool plumbing before either provider can repair it differently', () => {
     const document: ConversationDocument = {
       schemaVersion: 1,

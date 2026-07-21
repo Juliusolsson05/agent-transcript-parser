@@ -30,7 +30,13 @@ export function decodeClaudeConversation(
       const summary = textFromClaudeContent(record.message?.content)
       for (let index = entries.length - 1; index >= 0; index -= 1) {
         const candidate = entries[index]!
-        if (candidate.kind !== 'compaction' || candidate.summary.length > 0) continue
+        if (candidate.kind !== 'compaction') continue
+        // WHY the carrier must replace even non-empty boundary content:
+        // current Claude writes the generic UI status "Conversation compacted"
+        // into compact_boundary.content and puts the actual multi-thousand-word
+        // handoff in this isCompactSummary record. Treating any non-empty
+        // boundary as authoritative silently reduced real conversations to that
+        // two-word placeholder during cross-provider resume.
         if (summary !== null) candidate.summary = summary
         break
       }
