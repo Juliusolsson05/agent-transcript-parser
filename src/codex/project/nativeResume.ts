@@ -213,6 +213,20 @@ export function projectCodexNativeResume(
     }
     values.push(projectNonMessage(entry, timestamp, preserveNativeKinds))
     changes.push(preserved(entry, entry.kind))
+    if (entry.kind === 'reasoning' && entry.encrypted !== null && !preserveNativeKinds) {
+      // WHY ciphertext is provider-local even when both providers expose a
+      // field called "encrypted reasoning": the bytes are authenticated by the
+      // originating provider and Codex rejects Claude signatures with
+      // invalid_encrypted_content on the next API turn. Plaintext thinking is
+      // still retained in Codex's summary_text; only the unverifiable envelope
+      // is demoted at this cross-provider boundary.
+      changes.push(codexChange(
+        entry,
+        'demoted',
+        'native-resume.reasoning.encrypted-content-demoted',
+        'Dropped provider-local encrypted reasoning while preserving its plaintext summary.',
+      ))
+    }
     if (entry.kind === 'tool-result' && entry.isError !== null) {
       changes.push(codexChange(
         entry,
@@ -304,7 +318,9 @@ function projectNonMessage(
     payload: {
       type: 'reasoning',
       summary: [{ type: 'summary_text', text: entry.text }],
-      ...(entry.encrypted === null ? {} : { encrypted_content: entry.encrypted }),
+      ...(!preserveNativeKinds || entry.encrypted === null
+        ? {}
+        : { encrypted_content: entry.encrypted }),
     },
   }
 }

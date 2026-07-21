@@ -115,6 +115,26 @@ npm run corpus:profile -- --claude-root <path> --codex-root <path> --out <ignore
 The profiler is read-only and requires explicit roots and output. Raw personal
 transcripts are never committed.
 
+### Real translated-resume probe
+
+The structural and native-load tests intentionally avoid paid model turns, so
+they cannot prove that a translated session accepts a prompt and produces a
+reply. From this package inside an Agent Code checkout, run the opt-in probe
+against one transcript or a directory of JSONL transcripts:
+
+```bash
+npm run probe:live-resume -- --input ~/.codex/sessions/path/to/rollout.jsonl
+npm run probe:live-resume -- --input ./private-corpus --target both --max-files 10
+```
+
+The probe imports the sibling `codex-headless` and `claude-code-headless`
+packages, projects each input into a unique native session, resumes the real
+installed CLI in a throwaway read-only workspace, submits a no-tools summary
+prompt, and requires a newly committed assistant response. Cases run
+sequentially because every case makes a real provider request. Projected files
+and any resume forks are removed by default; pass `--keep` to retain a failed
+case for manual diagnosis.
+
 Requires Node 20.19 or newer. ESM only.
 
 ## Layout

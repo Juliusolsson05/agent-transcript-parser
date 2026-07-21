@@ -104,7 +104,12 @@ export function projectClaudeNativeResume(
         })
       } else {
         hasToolCall = true
-        blocks.push({ type: 'tool_use', id: entry.callId, name: entry.name, input: entry.input })
+        blocks.push({
+          type: 'tool_use',
+          id: entry.callId,
+          name: entry.name,
+          input: claudeToolInput(entry, changes),
+        })
       }
       changes.push(blocks.length > before
         ? preserved(entry, entry.kind)
@@ -144,7 +149,7 @@ export function projectClaudeNativeResume(
         content: pendingResults.map(entry => ({
           type: 'tool_result',
           tool_use_id: entry.callId,
-          content: entry.output,
+          content: claudeToolResultContent(entry, changes),
           ...(entry.isError === null ? {} : { is_error: entry.isError }),
         })),
       },
@@ -269,6 +274,109 @@ function claudeUserContent(content: unknown[]): unknown {
   const only = content[0]
   if (!isRecord(only) || only.type !== 'text' || typeof only.text !== 'string') return content
   return only.text
+}
+
+function claudeToolInput(
+  entry: ConversationToolCall,
+  changes: ProjectionChange[],
+): Record<string, unknown> {
+  if (isRecord(entry.input)) return entry.input
+  if (typeof entry.input === 'string') {
+    try {
+      const parsed = JSON.parse(entry.input) as unknown
+      if (isRecord(parsed)) {
+        changes.push(claudeChange(
+          entry,
+          'repaired',
+          'native-resume.tool-call.input-json-repaired',
+          'Parsed JSON-encoded tool input into the object Claude requires for historical tool_use blocks.',
+        ))
+        return parsed
+      }
+    } catch {
+      // A Codex custom_tool_call intentionally carries opaque text rather than
+      // JSON. Falling through preserves that text in a legal object envelope.
+    }
+  }
+  // WHY wrapping is mandatory rather than a lossy drop: Claude's Messages API
+  // rejects the ENTIRE resumed conversation when any historical tool_use.input
+  // is a string, array, primitive, or null. Codex legitimately persists opaque
+  // custom-tool input as a string, so forwarding the neutral `unknown` value
+  // made every such Codex -> Claude translation render successfully in the TUI
+  // and then fail only when the next prompt reached the API. The generic
+  // `input` envelope keeps the original value inspectable without claiming we
+  // know a provider-specific argument name for arbitrary future tools.
+  changes.push(claudeChange(
+    entry,
+    'repaired',
+    'native-resume.tool-call.input-object-repaired',
+    'Wrapped non-object tool input in the object Claude requires for historical tool_use blocks.',
+  ))
+  return { input: entry.input }
+}
+
+function claudeToolResultContent(
+  entry: ConversationToolResult,
+  changes: ProjectionChange[],
+): unknown {
+  if (typeof entry.output === 'string') return entry.output
+  if (!Array.isArray(entry.output)) {
+    changes.push(claudeChange(
+      entry,
+      'repaired',
+      'native-resume.tool-result.content-repaired',
+      'Serialized non-string tool output into content accepted by Claude historical tool_result blocks.',
+    ))
+    return printableJson(entry.output)
+  }
+
+  let repaired = false
+  const blocks = entry.output.map(value => {
+    if (isRecord(value)) {
+      if (
+        (value.type === 'input_text' || value.type === 'output_text') &&
+        typeof value.text === 'string'
+      ) {
+        repaired = true
+        return { type: 'text', text: value.text }
+      }
+      if (
+        value.type === 'text' ||
+        value.type === 'document' ||
+        value.type === 'image' ||
+        value.type === 'search_result' ||
+        value.type === 'tool_reference'
+      ) {
+        return value
+      }
+    }
+    repaired = true
+    return { type: 'text', text: printableJson(value) }
+  })
+  if (repaired) {
+    // WHY content tags need target normalization even though the neutral tool
+    // result deliberately keeps `output: unknown`: Codex emits arrays of
+    // Responses API `input_text` blocks, while Claude accepts only Messages API
+    // `text` blocks in historical tool_result content. The TUI renders the
+    // invalid history without complaint and the API rejects it only on the next
+    // prompt, so this conversion belongs at the native-resume boundary.
+    changes.push(claudeChange(
+      entry,
+      'repaired',
+      'native-resume.tool-result.content-blocks-repaired',
+      'Converted provider-specific tool output blocks into content tags accepted by Claude.',
+    ))
+  }
+  return blocks
+}
+
+function printableJson(value: unknown): string {
+  if (typeof value === 'string') return value
+  try {
+    return JSON.stringify(value) ?? String(value)
+  } catch {
+    return String(value)
+  }
 }
 
 function claudeMessageContent(

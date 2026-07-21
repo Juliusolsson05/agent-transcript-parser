@@ -252,6 +252,116 @@ describe('native-resume projection is distinct from archive projection', () => {
     expect(result.report.changes.filter(change => change.code.includes('non-adjacent'))).toHaveLength(2)
   })
 
+  it('repairs non-object Codex tool input before Claude API resume', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [
+        {
+          kind: 'tool-call',
+          callId: 'custom-1',
+          name: 'apply_patch',
+          input: '*** Begin Patch',
+          nativeKind: 'custom_tool_call',
+          ...source(0, {}),
+        },
+        {
+          kind: 'tool-result',
+          callId: 'custom-1',
+          output: [{ type: 'input_text', text: 'Done!' }],
+          isError: false,
+          nativeKind: 'custom_tool_call_output',
+          ...source(1, {}),
+        },
+      ],
+    }
+    const result = projectClaudeNativeResume(document, {
+      targetSessionId: 'claude-target',
+      now,
+      cwd: '/fixture/project',
+      version: 'fixture',
+      model: 'fixture',
+    })
+
+    expect(result.values[0]).toMatchObject({
+      type: 'assistant',
+      message: {
+        content: [{
+          type: 'tool_use',
+          id: 'custom-1',
+          input: { input: '*** Begin Patch' },
+        }],
+      },
+    })
+    expect(result.values[1]).toMatchObject({
+      type: 'user',
+      message: {
+        content: [{
+          type: 'tool_result',
+          tool_use_id: 'custom-1',
+          content: [{ type: 'text', text: 'Done!' }],
+        }],
+      },
+    })
+    expect(result.report.changes.map(change => change.code)).toContain(
+      'native-resume.tool-call.input-object-repaired',
+    )
+    expect(result.report.changes.map(change => change.code)).toContain(
+      'native-resume.tool-result.content-blocks-repaired',
+    )
+  })
+
+  it('does not send Claude reasoning ciphertext to Codex', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'claude',
+      sourceSessionIds: ['source'],
+      entries: [
+        {
+          kind: 'message',
+          role: 'user',
+          content: [{ kind: 'text', text: 'question' }],
+          ...source(0, {}),
+        },
+        {
+          kind: 'reasoning',
+          text: 'portable plaintext',
+          encrypted: 'claude-only-signature',
+          ...source(1, {}),
+        },
+        {
+          kind: 'message',
+          role: 'assistant',
+          content: [{ kind: 'text', text: 'answer' }],
+          ...source(2, {}),
+        },
+      ],
+    }
+    const result = projectCodexNativeResume(document, {
+      targetSessionId: 'codex-target',
+      now,
+      cwd: '/fixture/project',
+      cliVersion: 'fixture',
+      modelProvider: 'openai',
+      model: 'fixture',
+    })
+    const reasoning = result.values.find(value => (
+      value.type === 'response_item' && (value.payload as { type?: string }).type === 'reasoning'
+    ))
+
+    expect(reasoning).toMatchObject({
+      payload: {
+        type: 'reasoning',
+        summary: [{ type: 'summary_text', text: 'portable plaintext' }],
+      },
+    })
+    expect(reasoning?.payload).not.toHaveProperty('encrypted_content')
+    expect(result.report.changes.map(change => change.code)).toContain(
+      'native-resume.reasoning.encrypted-content-demoted',
+    )
+  })
+
   it('trims reasoning that becomes the Codex response-item tail', () => {
     const document: ConversationDocument = {
       schemaVersion: 1,
