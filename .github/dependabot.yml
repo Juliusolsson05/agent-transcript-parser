@@ -1,0 +1,42 @@
+# Routine majors remain manual so a green lockfile refresh cannot hide an API
+# migration. Security updates are grouped separately and may still cross a major
+# boundary when that is the only available remediation.
+version: 2
+updates:
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:00"
+      timezone: "Europe/Stockholm"
+    open-pull-requests-limit: 3
+    groups:
+      security-updates:
+        applies-to: "security-updates"
+        patterns:
+          - "*"
+      minor-and-patch:
+        applies-to: "version-updates"
+        patterns:
+          - "*"
+        update-types:
+          - "minor"
+          - "patch"
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - "version-update:semver-major"
+
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "tuesday"
+      time: "06:30"
+      timezone: "Europe/Stockholm"
+    open-pull-requests-limit: 3
+    groups:
+      github-actions:
+        patterns:
+          - "*"
