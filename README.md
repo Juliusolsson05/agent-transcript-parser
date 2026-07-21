@@ -48,12 +48,53 @@ const projected = codexNativeResumeProjector.projectNativeResume(conversation, {
   cwd: '/project',
   cliVersion: '0.144.6',
   modelProvider: 'openai',
-  model: 'gpt-5',
+  model: configuredModelId,
 })
 
 console.log(projected.values)
 console.log(projected.report)
 ```
+
+## Context and compaction planning
+
+The parser owns decisions that can be derived from a `ConversationDocument`;
+the host application owns live process I/O, clocks, cancellation, and UI. Use
+the typed plan rather than rebuilding compaction rules from loose booleans:
+
+```ts
+import {
+  budgetCharactersForContextTokens,
+  planConversationContext,
+} from 'agent-transcript-parser'
+
+const budget = budgetCharactersForContextTokens(200_000, {
+  effectiveContextPercent: 90,
+})
+const plan = planConversationContext(conversation, 'claude', budget)
+
+switch (plan.kind) {
+  case 'ready':
+  case 'existing-compaction':
+    await project(plan.conversation)
+    break
+  case 'requires-compaction':
+    await requestNativeCompaction()
+    break
+  case 'requires-portable-handoff':
+    await requestPlaintextHandoffFromSourceProvider()
+    break
+}
+```
+
+`requires-portable-handoff` is distinct from `requires-compaction`: current
+Codex compaction is durable but provider-encrypted, so another provider needs a
+read-only plaintext handoff turn. Claude compaction is portable only after its
+`isCompactSummary` carrier arrives; the preceding `Conversation compacted`
+boundary is intentionally classified as incomplete.
+
+`fitConversationToCharacterBudget` remains an explicit lossy escape hatch. Its
+result includes `stillExceedsBudget`; callers must not assume that a complete
+turn boundary small enough to satisfy an arbitrary budget always exists.
 
 ## Stable clone and rewind
 
@@ -114,6 +155,31 @@ npm run corpus:profile -- --claude-root <path> --codex-root <path> --out <ignore
 
 The profiler is read-only and requires explicit roots and output. Raw personal
 transcripts are never committed.
+
+### Real translated-resume probe
+
+The structural and native-load tests intentionally avoid paid model turns, so
+they cannot prove that a translated session accepts a prompt and produces a
+reply. From this package inside an Agent Code checkout, run the opt-in probe
+against one transcript or a directory of JSONL transcripts:
+
+```bash
+npm run probe:live-resume -- --input ~/.codex/sessions/path/to/rollout.jsonl
+npm run probe:live-resume -- --input ./private-corpus --target both --max-files 10
+```
+
+The probe imports only the sibling `codex-headless` and `claude-code-headless`
+packages, projects each input into a unique native session, resumes the real
+installed CLI in a throwaway read-only workspace, submits a no-tools summary
+prompt, and requires a newly committed assistant response. Cases run
+sequentially because every case makes a real provider request. Projected files
+and any resume forks are removed by default; pass `--keep` to retain a failed
+case for manual diagnosis.
+
+Inside an Agent Code checkout, run `npm run typecheck:probe` to type-check the
+optional harness against the sibling headless packages. The standalone package
+gate excludes that host-only harness, and the published `dist/` remains free of
+headless or Agent Code dependencies.
 
 Requires Node 20.19 or newer. ESM only.
 

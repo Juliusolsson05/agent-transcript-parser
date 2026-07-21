@@ -57,7 +57,18 @@ export function decodeCodexConversation(records: readonly CodexClassifiedRecord[
       }
     }
     if (record.family === 'compacted') {
-      entries.push({ kind: 'compaction', summary: stringField(record.payload, 'message') ?? '', timestamp, source })
+      entries.push({
+        kind: 'compaction',
+        summary: stringField(record.payload, 'message') ?? '',
+        // WHY an empty summary is still a complete native compaction: current
+        // Codex persists replacement history as provider-encrypted payload.
+        // Third-party consumers need to distinguish that durable boundary from
+        // a partially written Claude boundary and request a plaintext handoff
+        // instead of destructively compacting the same session a second time.
+        summarySource: 'encrypted',
+        timestamp,
+        source,
+      })
       continue
     }
     // Event messages intentionally remain opaque. Codex persists user text in

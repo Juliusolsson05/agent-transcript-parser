@@ -121,19 +121,55 @@ export function projectCodexNativeResume(
     }
     if (entry.kind === 'compaction') {
       closeTurn(timestamp)
-      values.push({
-        timestamp,
-        type: 'compacted',
-        payload: {
-          message: `${SUMMARY_PREFIX}\n${entry.summary}`,
-          replacement_history: [{
+      if (
+        conversation.sourceProvider === TARGET &&
+        entry.source.raw.type === 'compacted' &&
+        isRecord(entry.source.raw.payload)
+      ) {
+        // WHY same-provider clones preserve the observed encrypted record: a
+        // reconstructed plaintext replacement_history is not equivalent and
+        // Codex ignores it when building the next request. The source raw record
+        // is already provider-authenticated and carries no target session id, so
+        // it is the only faithful native representation available.
+        values.push(structuredClone(entry.source.raw))
+        changes.push(preserved(entry, 'compaction'))
+        continue
+      }
+      if (entry.summary.trim().length > 0) {
+        // WHY a foreign plaintext summary cannot masquerade as Codex's native
+        // `compacted` record: current Codex rollouts replace history with a
+        // provider-authenticated encrypted compaction item. A structurally
+        // plausible plaintext replacement_history loads without an error but
+        // is ignored when the next API request is built—the translated session
+        // then claims it has no prior work. A developer handoff message is an
+        // ordinary supported history item, so Codex actually sends the summary
+        // while still making clear that it is context, not a new user request.
+        values.push({
+          timestamp,
+          type: 'response_item',
+          payload: {
             type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text: `${SUMMARY_PREFIX}\n${entry.summary}` }],
-          }],
-        },
-      })
-      changes.push(preserved(entry, 'compaction'))
+            role: 'developer',
+            content: [{
+              type: 'input_text',
+              text: `${SUMMARY_PREFIX}\n${entry.summary}`,
+            }],
+          },
+        })
+        changes.push(codexChange(
+          entry,
+          'demoted',
+          'native-resume.compaction.foreign-summary-demoted',
+          'Projected a foreign plaintext compaction as a portable developer handoff because Codex native compaction is provider-encrypted.',
+        ))
+        continue
+      }
+      changes.push(codexChange(
+        entry,
+        'dropped',
+        'native-resume.compaction.unavailable-dropped',
+        'Dropped compaction whose provider-authenticated payload and portable plaintext summary were both unavailable.',
+      ))
       continue
     }
     if (entry.kind === 'message') {
@@ -213,6 +249,20 @@ export function projectCodexNativeResume(
     }
     values.push(projectNonMessage(entry, timestamp, preserveNativeKinds))
     changes.push(preserved(entry, entry.kind))
+    if (entry.kind === 'reasoning' && entry.encrypted !== null && !preserveNativeKinds) {
+      // WHY ciphertext is provider-local even when both providers expose a
+      // field called "encrypted reasoning": the bytes are authenticated by the
+      // originating provider and Codex rejects Claude signatures with
+      // invalid_encrypted_content on the next API turn. Plaintext thinking is
+      // still retained in Codex's summary_text; only the unverifiable envelope
+      // is demoted at this cross-provider boundary.
+      changes.push(codexChange(
+        entry,
+        'demoted',
+        'native-resume.reasoning.encrypted-content-demoted',
+        'Dropped provider-local encrypted reasoning while preserving its plaintext summary.',
+      ))
+    }
     if (entry.kind === 'tool-result' && entry.isError !== null) {
       changes.push(codexChange(
         entry,
@@ -304,7 +354,9 @@ function projectNonMessage(
     payload: {
       type: 'reasoning',
       summary: [{ type: 'summary_text', text: entry.text }],
-      ...(entry.encrypted === null ? {} : { encrypted_content: entry.encrypted }),
+      ...(!preserveNativeKinds || entry.encrypted === null
+        ? {}
+        : { encrypted_content: entry.encrypted }),
     },
   }
 }

@@ -54,6 +54,13 @@ export interface ConversationToolResult extends ConversationEntryBase {
 export interface ConversationCompaction extends ConversationEntryBase {
   kind: 'compaction'
   summary: string
+  /**
+   * Identifies what the source provider actually persisted, rather than asking
+   * every consumer to reverse-engineer completeness from summary text. The
+   * field is optional so hand-built ConversationDocument values remain source
+   * compatible; parser operations conservatively infer legacy values.
+   */
+  summarySource?: 'boundary' | 'carrier' | 'encrypted' | 'synthetic'
 }
 
 export interface ConversationOpaque extends ConversationEntryBase {

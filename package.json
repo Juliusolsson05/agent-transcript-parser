@@ -24,6 +24,7 @@
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsc",
     "typecheck": "tsc --noEmit",
+    "typecheck:probe": "tsc -p testing/tsconfig.json",
     "test": "vitest run",
     "test:core": "vitest run --project core --passWithNoTests",
     "test:system": "vitest run --project system --passWithNoTests",
@@ -35,6 +36,7 @@
     "corpus:extract-observed": "tsx testing/corpus/extract-observed-fixtures.mts",
     "corpus:extract-sequences": "tsx testing/corpus/extract-observed-sequences.mts",
     "corpus:profile": "tsx testing/corpus/profile-local-corpus.mts",
+    "probe:live-resume": "tsx testing/live-resume-probe.mts",
     "check": "npm run test:contract && npm run typecheck && npm test && npm run test:package",
     "verify": "npm run check"
   },
