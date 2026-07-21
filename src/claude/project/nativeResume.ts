@@ -97,11 +97,27 @@ export function projectClaudeNativeResume(
       const before = blocks.length
       if (entry.kind === 'message') blocks.push(...claudeMessageContent(entry, changes, preserveNativeContent))
       else if (entry.kind === 'reasoning') {
-        blocks.push({
-          type: 'thinking',
-          thinking: entry.text,
-          ...(entry.encrypted === null ? {} : { signature: entry.encrypted }),
-        })
+        if (!preserveNativeContent) {
+          // WHY foreign reasoning is dropped rather than copied as a Claude
+          // thinking block: signatures are provider-authenticated. Codex
+          // encrypted_content is not a Claude signature, while an unsigned
+          // historical thinking block is also not a valid native resume shape.
+          // Ordinary assistant messages retain the model-visible result.
+          changes.push(claudeChange(
+            entry,
+            'dropped',
+            'native-resume.reasoning.foreign-dropped',
+            'Dropped foreign provider reasoning because Claude cannot authenticate its thinking signature.',
+          ))
+          continue
+        }
+        if (entry.text.trim().length > 0) {
+          blocks.push({
+            type: 'thinking',
+            thinking: entry.text,
+            ...(entry.encrypted === null ? {} : { signature: entry.encrypted }),
+          })
+        }
       } else {
         hasToolCall = true
         blocks.push({

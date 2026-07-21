@@ -1,7 +1,16 @@
 import type {
   ConversationDocument,
   ConversationEntry,
+  ProviderId,
 } from '../conversation/types.js'
+import {
+  compactionPortability,
+  conversationAfterLatestPortableCompaction,
+  describeLatestCompaction,
+} from './compaction.js'
+
+export const DEFAULT_CHARACTERS_PER_TOKEN = 2.5
+export const DEFAULT_CONTEXT_RESERVE_FRACTION = 0.1
 
 export interface ContextBudgetResult {
   conversation: ConversationDocument
@@ -10,6 +19,7 @@ export interface ContextBudgetResult {
   estimatedCharactersBefore: number
   estimatedCharactersAfter: number
   budgetCharacters: number
+  stillExceedsBudget: boolean
 }
 
 export interface ContextBudgetAssessment {
@@ -20,15 +30,121 @@ export interface ContextBudgetAssessment {
   usesExistingCompaction: boolean
 }
 
+export type ConversationContextPlan =
+  | {
+      kind: 'ready'
+      conversation: ConversationDocument
+      estimatedCharacters: number
+      budgetCharacters: number
+    }
+  | {
+      kind: 'existing-compaction'
+      conversation: ConversationDocument
+      estimatedCharacters: number
+      budgetCharacters: number
+      compactionSourceLine: number
+    }
+  | {
+      kind: 'requires-portable-handoff'
+      conversation: ConversationDocument
+      estimatedCharacters: number
+      budgetCharacters: number
+      compactionSourceLine: number
+    }
+  | {
+      kind: 'requires-compaction'
+      conversation: ConversationDocument
+      estimatedCharacters: number
+      budgetCharacters: number
+      overflowCharacters: number
+    }
+
+export interface ContextCharacterBudgetOptions {
+  effectiveContextPercent?: number
+  reserveFraction?: number
+  charactersPerToken?: number
+}
+
+export function budgetCharactersForContextTokens(
+  contextTokens: number,
+  options: ContextCharacterBudgetOptions = {},
+): number {
+  if (!Number.isFinite(contextTokens) || contextTokens <= 0) {
+    throw new Error('budgetCharactersForContextTokens requires a positive context token count.')
+  }
+  const effectiveContextPercent = options.effectiveContextPercent ?? 100
+  const reserveFraction = options.reserveFraction ?? DEFAULT_CONTEXT_RESERVE_FRACTION
+  const charactersPerToken = options.charactersPerToken ?? DEFAULT_CHARACTERS_PER_TOKEN
+  if (effectiveContextPercent <= 0 || effectiveContextPercent > 100) {
+    throw new Error('effectiveContextPercent must be greater than zero and at most 100.')
+  }
+  if (reserveFraction < 0 || reserveFraction >= 1) {
+    throw new Error('reserveFraction must be at least zero and less than one.')
+  }
+  if (!Number.isFinite(charactersPerToken) || charactersPerToken <= 0) {
+    throw new Error('charactersPerToken must be positive.')
+  }
+  return Math.floor(
+    contextTokens * (effectiveContextPercent / 100) * (1 - reserveFraction) * charactersPerToken,
+  )
+}
+
+export function planConversationContext(
+  conversation: ConversationDocument,
+  targetProvider: ProviderId,
+  budgetCharacters: number,
+): ConversationContextPlan {
+  assertCharacterBudget(budgetCharacters, 'planConversationContext')
+  const latest = describeLatestCompaction(conversation)
+  const portability = compactionPortability(conversation.sourceProvider, targetProvider)
+
+  // WHY native-only compaction is checked before raw size: pre-compaction
+  // records may still be present on disk, but Codex no longer sends them to its
+  // model. A cross-provider target needs Codex to decrypt and summarize its own
+  // replacement history even if those stale records happen to fit numerically.
+  if (
+    latest?.availability === 'native-only' &&
+    portability.requiresPlaintextHandoffTurn
+  ) {
+    return {
+      kind: 'requires-portable-handoff',
+      conversation,
+      estimatedCharacters: estimateConversationCharacters(conversation),
+      budgetCharacters,
+      compactionSourceLine: latest.entry.source.line,
+    }
+  }
+
+  const effective = conversationAfterLatestPortableCompaction(conversation)
+  const estimatedCharacters = estimateConversationCharacters(effective)
+  if (estimatedCharacters <= budgetCharacters) {
+    return effective === conversation
+      ? { kind: 'ready', conversation, estimatedCharacters, budgetCharacters }
+      : {
+          kind: 'existing-compaction',
+          conversation: effective,
+          estimatedCharacters,
+          budgetCharacters,
+          compactionSourceLine: latest!.entry.source.line,
+        }
+  }
+
+  return {
+    kind: 'requires-compaction',
+    conversation: effective,
+    estimatedCharacters,
+    budgetCharacters,
+    overflowCharacters: estimatedCharacters - budgetCharacters,
+  }
+}
+
 export function assessConversationContextBudget(
   conversation: ConversationDocument,
   budgetCharacters: number,
 ): ContextBudgetAssessment {
-  if (!Number.isSafeInteger(budgetCharacters) || budgetCharacters <= 0) {
-    throw new Error('assessConversationContextBudget requires a positive integer budget.')
-  }
+  assertCharacterBudget(budgetCharacters, 'assessConversationContextBudget')
 
-  const effective = conversationAfterLatestCompaction(conversation)
+  const effective = conversationAfterLatestPortableCompaction(conversation)
   const estimatedCharacters = estimateConversationCharacters(effective)
   return {
     conversation: effective,
@@ -42,25 +158,7 @@ export function assessConversationContextBudget(
 export function conversationAfterLatestCompaction(
   conversation: ConversationDocument,
 ): ConversationDocument {
-  let latestCompactionIndex = -1
-  for (let index = conversation.entries.length - 1; index >= 0; index -= 1) {
-    const entry = conversation.entries[index]
-    if (entry?.kind === 'compaction' && entry.summary.trim().length > 0) {
-      latestCompactionIndex = index
-      break
-    }
-  }
-  if (latestCompactionIndex < 0) return conversation
-
-  // WHY the latest native summary is the semantic replacement for everything
-  // before it: retaining the pre-compaction turns in a cross-provider resume
-  // makes the target rebuild context the source provider deliberately evicted.
-  // Starting at the summary preserves the provider-authored memory while also
-  // making the capacity estimate match what a native resume will actually send.
-  return {
-    ...conversation,
-    entries: conversation.entries.slice(latestCompactionIndex),
-  }
+  return conversationAfterLatestPortableCompaction(conversation)
 }
 
 export function estimateConversationCharacters(
@@ -76,9 +174,7 @@ export function fitConversationToCharacterBudget(
   conversation: ConversationDocument,
   budgetCharacters: number,
 ): ContextBudgetResult {
-  if (!Number.isSafeInteger(budgetCharacters) || budgetCharacters <= 0) {
-    throw new Error('fitConversationToCharacterBudget requires a positive integer budget.')
-  }
+  assertCharacterBudget(budgetCharacters, 'fitConversationToCharacterBudget')
   const costs = conversation.entries.map(estimateEntryCharacters)
   const estimatedCharactersBefore = estimateConversationCharacters(conversation)
   if (estimatedCharactersBefore <= budgetCharacters) {
@@ -89,6 +185,7 @@ export function fitConversationToCharacterBudget(
       estimatedCharactersBefore,
       estimatedCharactersAfter: estimatedCharactersBefore,
       budgetCharacters,
+      stillExceedsBudget: false,
     }
   }
 
@@ -121,6 +218,7 @@ export function fitConversationToCharacterBudget(
       estimatedCharactersBefore,
       estimatedCharactersAfter: estimatedCharactersBefore,
       budgetCharacters,
+      stillExceedsBudget: true,
     }
   }
 
@@ -139,20 +237,29 @@ export function fitConversationToCharacterBudget(
   const boundary: Extract<ConversationEntry, { kind: 'compaction' }> = {
     kind: 'compaction',
     summary,
+    summarySource: 'synthetic',
     timestamp: kept[0]?.timestamp ?? dropped.at(-1)?.timestamp ?? null,
     source,
   }
   const entries = [boundary, ...kept]
+  const estimatedCharactersAfter = entries.reduce(
+    (total, entry) => total + estimateEntryCharacters(entry),
+    0,
+  )
   return {
     conversation: { ...conversation, entries },
     truncated: true,
     droppedEntries: dropped.length,
     estimatedCharactersBefore,
-    estimatedCharactersAfter: entries.reduce(
-      (total, entry) => total + estimateEntryCharacters(entry),
-      0,
-    ),
+    estimatedCharactersAfter,
     budgetCharacters,
+    stillExceedsBudget: estimatedCharactersAfter > budgetCharacters,
+  }
+}
+
+function assertCharacterBudget(budgetCharacters: number, caller: string): void {
+  if (!Number.isSafeInteger(budgetCharacters) || budgetCharacters <= 0) {
+    throw new Error(`${caller} requires a positive integer budget.`)
   }
 }
 

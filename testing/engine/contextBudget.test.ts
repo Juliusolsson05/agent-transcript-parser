@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest'
 
 import {
   assessConversationContextBudget,
+  budgetCharactersForContextTokens,
   fitConversationToCharacterBudget,
+  planConversationContext,
 } from '../../src/operations/contextBudget.js'
+import {
+  describeLatestCompaction,
+  portableCodexHandoffAfterLine,
+} from '../../src/operations/compaction.js'
 import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
+import { resolveCodexTargetProfileFromSources } from '../../src/codex/profile/targetProfile.js'
 
 describe('context budget fitting', () => {
   it('keeps the largest recent suffix beginning at a complete user boundary', () => {
@@ -110,6 +117,149 @@ describe('context budget fitting', () => {
     expect(result.requiresCompaction).toBe(true)
     expect(result.conversation).toBe(conversation)
   })
+
+  it('plans from a portable compaction instead of exposing loose booleans to callers', () => {
+    const conversation: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'claude',
+      sourceSessionIds: ['source'],
+      entries: [
+        message('user', 'old context '.repeat(100), 0),
+        {
+          kind: 'compaction',
+          summary: 'portable summary',
+          summarySource: 'carrier',
+          ...source(1),
+        },
+        message('user', 'recent question', 2),
+      ],
+    }
+
+    const plan = planConversationContext(conversation, 'codex', 100)
+
+    expect(plan).toMatchObject({
+      kind: 'existing-compaction',
+      compactionSourceLine: 1,
+    })
+    expect(plan.conversation.entries).toEqual(conversation.entries.slice(1))
+  })
+
+  it('requires a plaintext handoff for Codex encrypted compaction regardless of stale raw size', () => {
+    const conversation: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [{
+        kind: 'compaction',
+        summary: '',
+        summarySource: 'encrypted',
+        ...source(4),
+      }],
+    }
+
+    expect(planConversationContext(conversation, 'claude', 10_000)).toMatchObject({
+      kind: 'requires-portable-handoff',
+      compactionSourceLine: 4,
+    })
+  })
+
+  it('marks a Claude boundary placeholder incomplete until its carrier arrives', () => {
+    const conversation: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'claude',
+      sourceSessionIds: ['source'],
+      entries: [{
+        kind: 'compaction',
+        summary: 'Conversation compacted',
+        summarySource: 'boundary',
+        ...source(8),
+      }],
+    }
+
+    expect(describeLatestCompaction(conversation)?.availability).toBe('incomplete')
+    conversation.entries[0] = {
+      ...conversation.entries[0]!,
+      kind: 'compaction',
+      summary: 'Detailed provider-authored summary',
+      summarySource: 'carrier',
+    }
+    expect(describeLatestCompaction(conversation)?.availability).toBe('portable')
+  })
+
+  it('accepts Codex handoff text only from a completed turn', () => {
+    const conversation: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [
+        message('assistant', "I'll summarize.", 10),
+        message('assistant', 'Detailed completed handoff.', 11),
+        {
+          kind: 'opaque',
+          nativeType: 'event_msg',
+          ...source(12, {
+            type: 'event_msg',
+            payload: {
+              type: 'task_complete',
+              last_agent_message: 'Detailed completed handoff.',
+            },
+          }),
+        },
+      ],
+    }
+
+    expect(portableCodexHandoffAfterLine(conversation, 9)).toMatchObject({
+      summary: 'Detailed completed handoff.',
+      completionLine: 12,
+    })
+    expect(portableCodexHandoffAfterLine({
+      ...conversation,
+      entries: conversation.entries.slice(0, 2),
+    }, 9)).toBeNull()
+  })
+
+  it('derives character budgets from one documented token policy', () => {
+    expect(budgetCharactersForContextTokens(200_000)).toBe(450_000)
+    expect(budgetCharactersForContextTokens(272_000, {
+      effectiveContextPercent: 95,
+    })).toBe(581_400)
+  })
+
+  it('resolves the active Codex profile and never borrows another model budget', () => {
+    const profile = resolveCodexTargetProfileFromSources(`
+profile = "work"
+model = "top-level"
+
+[profiles.work]
+model = "profile-model"
+model_provider = "custom"
+`, {
+      models: [
+        { slug: 'other-model', visibility: 'list', context_window: 1_000_000 },
+        {
+          slug: 'profile-model',
+          visibility: 'list',
+          context_window: 272_000,
+          effective_context_window_percent: 95,
+        },
+      ],
+    })
+
+    expect(profile).toMatchObject({
+      model: 'profile-model',
+      modelProvider: 'custom',
+      contextTokens: 272_000,
+      effectiveContextPercent: 95,
+      budgetCharacters: 581_400,
+    })
+    expect(resolveCodexTargetProfileFromSources('model = "missing"', {
+      models: [{ slug: 'other-model', visibility: 'list', context_window: 1_000_000 }],
+    })).toMatchObject({
+      model: 'missing',
+      contextTokens: 200_000,
+      budgetCharacters: 405_000,
+    })
+  })
 })
 
 function message(
@@ -147,13 +297,13 @@ function toolResult(line: number): ConversationEntry {
   }
 }
 
-function source(line: number) {
+function source(line: number, raw: Record<string, unknown> = {}) {
   return {
     timestamp: '2026-07-21T00:00:00.000Z',
     source: {
       provider: 'fixture',
       line,
-      raw: {},
+      raw,
       evidence: [],
     },
   }

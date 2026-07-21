@@ -400,6 +400,86 @@ describe('native-resume projection is distinct from archive projection', () => {
     )
   })
 
+  it('does not send Codex reasoning ciphertext to Claude', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [
+        {
+          kind: 'message',
+          role: 'user',
+          content: [{ kind: 'text', text: 'question' }],
+          ...source(0, {}),
+        },
+        {
+          kind: 'reasoning',
+          text: 'codex reasoning summary',
+          encrypted: 'codex-only-ciphertext',
+          ...source(1, {}),
+        },
+        {
+          kind: 'message',
+          role: 'assistant',
+          content: [{ kind: 'text', text: 'answer' }],
+          ...source(2, {}),
+        },
+      ],
+    }
+
+    const result = projectClaudeNativeResume(document, {
+      targetSessionId: 'claude-target',
+      now,
+      cwd: '/fixture/project',
+      version: 'fixture',
+      model: 'fixture',
+    })
+
+    expect(JSON.stringify(result.values)).not.toContain('codex-only-ciphertext')
+    expect(JSON.stringify(result.values)).not.toContain('"type":"thinking"')
+    expect(result.report.changes.map(change => change.code)).toContain(
+      'native-resume.reasoning.foreign-dropped',
+    )
+  })
+
+  it('preserves provider-authenticated Codex compaction for same-provider clones', () => {
+    const rawCompaction = {
+      timestamp: now,
+      type: 'compacted',
+      payload: {
+        message: '',
+        replacement_history: [{ type: 'encrypted', encrypted_content: 'provider-cipher' }],
+      },
+    }
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [{
+        kind: 'compaction',
+        summary: '',
+        summarySource: 'encrypted',
+        ...source(4, rawCompaction),
+      }],
+    }
+
+    const result = projectCodexNativeResume(document, {
+      targetSessionId: 'codex-target',
+      now,
+      cwd: '/fixture/project',
+      cliVersion: 'fixture',
+      modelProvider: 'openai',
+      model: 'fixture',
+    })
+
+    expect(result.values).toContainEqual(rawCompaction)
+    expect(JSON.stringify(result.values)).toContain('provider-cipher')
+    expect(result.report.changes).toContainEqual(expect.objectContaining({
+      kind: 'preserved',
+      code: 'native-resume.compaction.preserved',
+    }))
+  })
+
   it('trims reasoning that becomes the Codex response-item tail', () => {
     const document: ConversationDocument = {
       schemaVersion: 1,

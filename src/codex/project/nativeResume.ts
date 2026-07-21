@@ -121,7 +121,21 @@ export function projectCodexNativeResume(
     }
     if (entry.kind === 'compaction') {
       closeTurn(timestamp)
-      if (conversation.sourceProvider !== TARGET) {
+      if (
+        conversation.sourceProvider === TARGET &&
+        entry.source.raw.type === 'compacted' &&
+        isRecord(entry.source.raw.payload)
+      ) {
+        // WHY same-provider clones preserve the observed encrypted record: a
+        // reconstructed plaintext replacement_history is not equivalent and
+        // Codex ignores it when building the next request. The source raw record
+        // is already provider-authenticated and carries no target session id, so
+        // it is the only faithful native representation available.
+        values.push(structuredClone(entry.source.raw))
+        changes.push(preserved(entry, 'compaction'))
+        continue
+      }
+      if (entry.summary.trim().length > 0) {
         // WHY a foreign plaintext summary cannot masquerade as Codex's native
         // `compacted` record: current Codex rollouts replace history with a
         // provider-authenticated encrypted compaction item. A structurally
@@ -150,19 +164,12 @@ export function projectCodexNativeResume(
         ))
         continue
       }
-      values.push({
-        timestamp,
-        type: 'compacted',
-        payload: {
-          message: `${SUMMARY_PREFIX}\n${entry.summary}`,
-          replacement_history: [{
-            type: 'message',
-            role: 'user',
-            content: [{ type: 'input_text', text: `${SUMMARY_PREFIX}\n${entry.summary}` }],
-          }],
-        },
-      })
-      changes.push(preserved(entry, 'compaction'))
+      changes.push(codexChange(
+        entry,
+        'dropped',
+        'native-resume.compaction.unavailable-dropped',
+        'Dropped compaction whose provider-authenticated payload and portable plaintext summary were both unavailable.',
+      ))
       continue
     }
     if (entry.kind === 'message') {

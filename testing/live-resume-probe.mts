@@ -20,16 +20,18 @@ import * as pty from 'node-pty'
 
 import { ClaudeCodeHeadless } from '../../claude-code-headless/src/index.ts'
 import { CodexHeadless } from '../../codex-headless/src/index.ts'
-import { isCodexReadyForPromptScreen } from '../../../src/providers/codex/runtime/codexReadyForPrompt.js'
 import {
   classifyClaudeDocument,
   classifyCodexDocument,
   decodeClaudeConversation,
   decodeCodexConversation,
   decodeJsonl,
+  describeLatestCompaction,
   fitConversationToCharacterBudget,
+  planConversationContext,
   projectClaudeNativeResume,
   projectCodexNativeResume,
+  resolveCodexTargetProfileFromSources,
 } from '../src/index.js'
 import type {
   ConversationDocument,
@@ -155,6 +157,7 @@ async function runCase(
     const preparedConversation = await conversationForTargetBudget(
       conversation,
       source,
+      target,
       budgetCharacters,
       options,
       diagnostics,
@@ -232,7 +235,7 @@ async function prepareProjection(
   const workspace = (await realpath(workspaceAlias)).normalize('NFC')
 
   if (provider === 'codex') {
-    const codexModel = options.codexModel ?? await configuredCodexModel()
+    const codexModel = (await configuredCodexTargetProfile(options)).model
     const projection = projectCodexNativeResume(conversation, {
       targetSessionId: sessionId,
       now,
@@ -304,6 +307,7 @@ async function prepareProjection(
 async function conversationForTargetBudget(
   conversation: ConversationDocument,
   source: Provider,
+  target: Provider,
   budgetCharacters: number,
   options: ProbeOptions,
   diagnostics: string[],
@@ -311,52 +315,61 @@ async function conversationForTargetBudget(
   conversation: ConversationDocument
   strategy: NonNullable<ProbeResult['contextFit']>['strategy']
 }> {
-  const initial = fitConversationToCharacterBudget(conversation, budgetCharacters)
-  if (initial.estimatedCharactersBefore <= budgetCharacters) {
-    return { conversation, strategy: 'none' }
-  }
-
-  const existing = conversationAfterLatestCompaction(conversation)
-  if (existing) {
-    const existingSize = fitConversationToCharacterBudget(existing, budgetCharacters)
-    if (existingSize.estimatedCharactersBefore <= budgetCharacters) {
+  const initial = planConversationContext(conversation, target, budgetCharacters)
+  if (initial.kind === 'ready' || initial.kind === 'existing-compaction') {
+    if (initial.kind === 'existing-compaction') {
       diagnostics.push('used existing source compaction summary and post-compaction history')
-      return { conversation: existing, strategy: 'existing-compaction' }
+    }
+    return {
+      conversation: initial.conversation,
+      strategy: initial.kind === 'ready' ? 'none' : 'existing-compaction',
     }
   }
   if (options.oversizeMode === 'fail') {
     throw new Error(
-      `Decoded conversation needs approximately ${initial.estimatedCharactersBefore} characters, ` +
+      `Decoded conversation needs approximately ${initial.estimatedCharacters} characters, ` +
       `above the ${budgetCharacters} target budget, and has no sufficient persisted compaction.`,
     )
   }
   if (options.oversizeMode === 'truncate') {
-    return { conversation, strategy: 'truncate' }
+    if (initial.kind === 'requires-portable-handoff') {
+      throw new Error('Encrypted Codex compaction requires a plaintext handoff and cannot be safely truncated.')
+    }
+    return { conversation: initial.conversation, strategy: 'truncate' }
   }
 
-  diagnostics.push(`source conversation exceeds target budget; requesting native ${source} compaction`)
-  const compacted = await compactSourceConversation(conversation, source, options, diagnostics)
-  const compactedSize = fitConversationToCharacterBudget(compacted, budgetCharacters)
-  if (compactedSize.estimatedCharactersBefore > budgetCharacters) {
+  diagnostics.push(initial.kind === 'requires-portable-handoff'
+    ? 'existing Codex compaction requires a plaintext portable handoff'
+    : `source conversation exceeds target budget; requesting native ${source} compaction`)
+  const compacted = await compactSourceConversation(
+    conversation,
+    source,
+    initial.kind === 'requires-portable-handoff',
+    options,
+    diagnostics,
+  )
+  const compactedPlan = planConversationContext(compacted, target, budgetCharacters)
+  if (compactedPlan.kind !== 'ready' && compactedPlan.kind !== 'existing-compaction') {
     throw new Error(
       `Native ${source} compaction persisted, but its summary plus retained history still needs ` +
-      `${compactedSize.estimatedCharactersBefore} characters above the ${budgetCharacters} target budget. ` +
+      `${compactedPlan.estimatedCharacters} characters above the ${budgetCharacters} target budget. ` +
       'Rerun with --oversize-mode truncate only if explicit history loss is acceptable.',
     )
   }
-  return { conversation: compacted, strategy: 'native-compaction' }
+  return { conversation: compactedPlan.conversation, strategy: 'native-compaction' }
 }
 
 async function compactSourceConversation(
   conversation: ConversationDocument,
   source: Provider,
+  reuseNativeCompaction: boolean,
   options: ProbeOptions,
   diagnostics: string[],
 ): Promise<ConversationDocument> {
   const prepared = await prepareProjection(conversation, source, options)
   try {
     const compacted = source === 'codex'
-      ? await compactCodexClone(prepared, options, diagnostics)
+      ? await compactCodexClone(prepared, reuseNativeCompaction, options, diagnostics)
       : await compactClaudeClone(prepared, options, diagnostics)
     diagnostics.push(`native ${source} compaction persisted a transferable summary`)
     return compacted
@@ -367,6 +380,7 @@ async function compactSourceConversation(
 
 async function compactCodexClone(
   prepared: PreparedProjection,
+  reuseNativeCompaction: boolean,
   options: ProbeOptions,
   diagnostics: string[],
 ): Promise<ConversationDocument> {
@@ -388,13 +402,36 @@ async function compactCodexClone(
   try {
     await headless.start()
     await waitForCodexReady(headless, options.timeoutMs, diagnostics)
-    await submitCodexPrompt(headless, '/compact', '/compact', diagnostics)
-    return await waitForPersistedCompaction(
-      () => activePath,
-      'codex',
-      options.timeoutMs,
-      () => headless.isIdle(),
-    )
+    if (!reuseNativeCompaction) {
+      await submitCodexPrompt(headless, '/compact', '/compact', diagnostics)
+      await waitForPersistedCompaction(
+        () => activePath,
+        'codex',
+        options.timeoutMs,
+        () => headless.isIdle(),
+      )
+    } else {
+      diagnostics.push('reused existing Codex native compaction without compacting twice')
+    }
+    await waitForCodexReady(headless, options.timeoutMs, diagnostics)
+    const marker = `ATP_PORTABLE_HANDOFF_${randomUUID()}`
+    const prompt = `${portableSummaryPrompt()} End your response with exactly ${marker}.`
+    const response = committedResponse(headless, marker, options.timeoutMs, () => headless.getScreen())
+    await submitCodexPrompt(headless, prompt, marker, diagnostics)
+    const summary = (await response).replace(marker, '').trim()
+    if (!summary) throw new Error('Codex completed the portable handoff turn without summary text.')
+    return {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: [prepared.sessionId],
+      entries: [{
+        kind: 'compaction',
+        summary,
+        summarySource: 'synthetic',
+        timestamp: new Date().toISOString(),
+        source: { provider: 'codex', line: 0, raw: {}, evidence: [] },
+      }],
+    }
   } finally {
     try { terminal.kill() } catch { /* PTY may already have exited. */ }
     await headless.stop()
@@ -442,15 +479,11 @@ async function waitForPersistedCompaction(
   while (Date.now() < deadline) {
     try {
       const conversation = await readConversation(path(), provider)
-      const compacted = conversationAfterLatestCompaction(conversation)
-      const summary = compacted?.entries[0]
-      if (
-        compacted &&
-        summary?.kind === 'compaction' &&
-        summary.summary.trim().length > 0 &&
-        isIdle()
-      ) {
-        return compacted
+      const latest = describeLatestCompaction(conversation)
+      if (latest && latest.availability !== 'incomplete' && isIdle()) {
+        return latest.availability === 'portable'
+          ? { ...conversation, entries: conversation.entries.slice(latest.entryIndex) }
+          : conversation
       }
     } catch {
       // Provider JSONL writes are append-oriented. A poll can land between bytes;
@@ -458,17 +491,7 @@ async function waitForPersistedCompaction(
     }
     await delay(100)
   }
-  throw new Error(`Timed out waiting for ${provider} /compact to persist a non-empty summary.`)
-}
-
-function conversationAfterLatestCompaction(
-  conversation: ConversationDocument,
-): ConversationDocument | null {
-  const index = conversation.entries.findLastIndex(entry => (
-    entry.kind === 'compaction' && entry.summary.trim().length > 0
-  ))
-  if (index < 0) return null
-  return { ...conversation, entries: conversation.entries.slice(index) }
+  throw new Error(`Timed out waiting for ${provider} /compact to persist a durable compaction.`)
 }
 
 async function readConversation(path: string, provider: Provider): Promise<ConversationDocument> {
@@ -603,6 +626,23 @@ function committedResponse(
   timeoutMs: number,
   screen: () => string,
 ): Promise<string> {
+  type CommittedEvents = {
+    on(event: 'turn_committed', listener: (event: { role: string; text: string }) => void): void
+    on(event: 'tail_error', listener: (error: Error) => void): void
+    off(event: 'turn_committed', listener: (event: { role: string; text: string }) => void): void
+    off(event: 'tail_error', listener: (error: Error) => void): void
+  }
+  type LifecycleEvents = {
+    on(event: 'exit', listener: (event: { exitCode: number; signal?: number }) => void): void
+    off(event: 'exit', listener: (event: { exitCode: number; signal?: number }) => void): void
+  }
+  // WHY narrow structural adapters are used here: both headless packages expose
+  // these identical runtime events, but their generic EventEmitter overloads
+  // form an uncallable union in TypeScript. The probe depends only on this
+  // shared event subset rather than lying that either full provider API is the
+  // other provider's type.
+  const committed = headless.committed as unknown as CommittedEvents
+  const lifecycle = headless as unknown as LifecycleEvents
   return new Promise((resolvePromise, rejectPromise) => {
     let promptCommitted = false
     let lastAssistant = ''
@@ -641,14 +681,14 @@ function committedResponse(
     }
     const cleanup = (): void => {
       clearTimeout(timeout)
-      headless.committed.off('turn_committed', onTurn)
-      headless.committed.off('tail_error', onTailError)
-      headless.off('exit', onExit)
+      committed.off('turn_committed', onTurn)
+      committed.off('tail_error', onTailError)
+      lifecycle.off('exit', onExit)
     }
 
-    headless.committed.on('turn_committed', onTurn)
-    headless.committed.on('tail_error', onTailError)
-    headless.on('exit', onExit)
+    committed.on('turn_committed', onTurn)
+    committed.on('tail_error', onTailError)
+    lifecycle.on('exit', onExit)
   })
 }
 
@@ -856,58 +896,48 @@ async function collectJsonl(directory: string, output: string[]): Promise<void> 
   }
 }
 
-async function configuredCodexModel(): Promise<string> {
+async function configuredCodexTargetProfile(options: ProbeOptions) {
   const codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex')
   const configPath = join(codexHome, 'config.toml')
-  let source: string
-  try {
-    source = await readFile(configPath, 'utf8')
-  } catch (error) {
-    throw new Error(
-      `No --codex-model was supplied and ${configPath} could not be read: ` +
-      (error instanceof Error ? error.message : String(error)),
-    )
-  }
-  // WHY only the top-level key is accepted: a profile-local model may not be
-  // active for this CLI invocation. Guessing one would recreate the exact stale
-  // model-metadata failure this probe is intended to expose.
-  const topLevel = source.split(/^\s*\[/m, 1)[0] ?? ''
-  const match = /^\s*model\s*=\s*"((?:\\.|[^"\\])*)"\s*(?:#.*)?$/m.exec(topLevel)
-  if (!match) {
-    throw new Error(`No top-level model was found in ${configPath}; pass --codex-model explicitly.`)
-  }
-  return JSON.parse(`"${match[1]}"`) as string
+  const cachePath = join(codexHome, 'models_cache.json')
+  const [config, cache] = await Promise.all([
+    readFile(configPath, 'utf8').catch(() => ''),
+    readFile(cachePath, 'utf8')
+      .then(value => JSON.parse(value) as unknown)
+      .catch(() => null),
+  ])
+  return resolveCodexTargetProfileFromSources(config, cache, {
+    ...(options.codexModel ? { model: options.codexModel } : {}),
+  })
 }
 
 async function configuredCodexContextCharacters(options: ProbeOptions): Promise<number> {
-  const codexHome = process.env.CODEX_HOME ?? join(homedir(), '.codex')
-  const cachePath = join(codexHome, 'models_cache.json')
-  const model = options.codexModel ?? await configuredCodexModel()
-  try {
-    const cache = JSON.parse(await readFile(cachePath, 'utf8')) as {
-      models?: Array<{
-        slug?: string
-        context_window?: number
-        effective_context_window_percent?: number
-      }>
-    }
-    const metadata = cache.models?.find(candidate => candidate.slug === model)
-    if (metadata && typeof metadata.context_window === 'number') {
-      const effectivePercent = metadata.effective_context_window_percent ?? 100
-      // WHY this is deliberately conservative: characters are only a portable
-      // tokenizer-free estimate, tool JSON/code tokenizes more densely than
-      // prose, and Codex adds its own instructions plus the requested reply.
-      // Reserving 30% of the effective window and assuming 2.5 chars/token
-      // prevents a nominally-fitting translation from failing at submission.
-      return Math.floor(
-        metadata.context_window * (effectivePercent / 100) * 0.7 * 2.5,
-      )
-    }
-  } catch {
-    // Fall through to the safe default. A stale/malformed optional model cache
-    // must not make the entire corpus harness unusable.
-  }
-  return 450_000
+  return (await configuredCodexTargetProfile(options)).budgetCharacters
+}
+
+function portableSummaryPrompt(): string {
+  return [
+    'Read only. Do not use tools or modify files.',
+    'Write a detailed portable handoff summary of the conversation so another coding agent can continue the work.',
+    'Include completed work, decisions, files changed, validation, unresolved failures, and exact next steps.',
+    'Return only the handoff summary.',
+  ].join(' ')
+}
+
+function isCodexReadyForPromptScreen(screen: string): boolean {
+  // WHY the standalone parser probe keeps this narrow predicate locally: the
+  // package must run from its own checkout. Importing Agent Code's renderer or
+  // provider runtime inverted the dependency and made the published package's
+  // flagship diagnostic impossible to type-check or execute independently.
+  if (!screen) return false
+  if (screen.includes('Do you trust the contents of this directory')) return false
+  if (screen.includes('Yes, continue') && screen.includes('No, quit')) return false
+  if (screen.includes('Working (')) return false
+  if (screen.includes('Allow command') || screen.includes('allow command')) return false
+  if (screen.includes('Approve') && screen.includes('Deny')) return false
+  if (screen.includes("don't ask again")) return false
+  if (!/(^|\n)›\s/.test(screen)) return false
+  return screen.includes(' · ')
 }
 
 function binaryVersion(binary: string, strip?: RegExp): string {

@@ -37,7 +37,10 @@ export function decodeClaudeConversation(
         // handoff in this isCompactSummary record. Treating any non-empty
         // boundary as authoritative silently reduced real conversations to that
         // two-word placeholder during cross-provider resume.
-        if (summary !== null) candidate.summary = summary
+        if (summary !== null) {
+          candidate.summary = summary
+          candidate.summarySource = 'carrier'
+        }
         break
       }
       continue
@@ -109,7 +112,13 @@ export function decodeClaudeConversation(
       continue
     }
     if (record.family === 'system' && record.subtype === 'compact_boundary') {
-      entries.push({ kind: 'compaction', summary: compactBoundarySummary(record.raw) ?? '', timestamp, source })
+      entries.push({
+        kind: 'compaction',
+        summary: compactBoundarySummary(record.raw) ?? '',
+        summarySource: 'boundary',
+        timestamp,
+        source,
+      })
       continue
     }
     entries.push({ kind: 'opaque', nativeType: stringField(record.raw, 'type'), timestamp, source })
