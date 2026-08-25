@@ -19,7 +19,10 @@ import process from 'node:process'
 import * as pty from 'node-pty'
 
 import { ClaudeCodeHeadless } from '../../claude-code-headless/src/index.ts'
-import { CodexHeadless } from '../../codex-headless/src/index.ts'
+import {
+  CodexHeadless,
+  prepareCodexResumeRollout,
+} from '../../codex-headless/src/index.ts'
 import {
   classifyClaudeDocument,
   classifyCodexDocument,
@@ -378,23 +381,53 @@ async function compactSourceConversation(
   }
 }
 
+async function openCodexResume(
+  prepared: PreparedProjection,
+  options: ProbeOptions,
+): Promise<{ terminal: pty.IPty; headless: CodexHeadless }> {
+  // WHY the probe must exercise the same irreversible boundary as production:
+  // Codex may reconstruct a fork immediately after spawn. Locating X and
+  // registering lineage after the PTY exists would make this flagship real-data
+  // verifier both racy and incapable of detecting the production regression it
+  // is meant to guard.
+  const resumeRolloutPreparation = await prepareCodexResumeRollout({
+    cwd: prepared.workspace,
+    resumeThreadId: prepared.sessionId,
+  })
+  let terminal: pty.IPty | null = null
+  try {
+    terminal = pty.spawn(options.codexBinary, [
+      '--sandbox',
+      'read-only',
+      '--ask-for-approval',
+      'never',
+      '--no-alt-screen',
+      'resume',
+      prepared.sessionId,
+    ], terminalOptions(prepared.workspace))
+    const headless = new CodexHeadless({
+      pty: terminal,
+      cwd: prepared.workspace,
+      resumeThreadId: prepared.sessionId,
+      resumeRolloutPreparation,
+      cols: 160,
+      rows: 50,
+    })
+    return { terminal, headless }
+  } catch (error) {
+    try { terminal?.kill() } catch { /* Spawn may have failed before a live PTY existed. */ }
+    await resumeRolloutPreparation.dispose(true)
+    throw error
+  }
+}
+
 async function compactCodexClone(
   prepared: PreparedProjection,
   reuseNativeCompaction: boolean,
   options: ProbeOptions,
   diagnostics: string[],
 ): Promise<ConversationDocument> {
-  const terminal = pty.spawn(options.codexBinary, [
-    '--sandbox', 'read-only', '--ask-for-approval', 'never', '--no-alt-screen',
-    'resume', prepared.sessionId,
-  ], terminalOptions(prepared.workspace))
-  const headless = new CodexHeadless({
-    pty: terminal,
-    cwd: prepared.workspace,
-    resumeThreadId: prepared.sessionId,
-    cols: 160,
-    rows: 50,
-  })
+  const { terminal, headless } = await openCodexResume(prepared, options)
   let activePath = prepared.transcriptPath
   headless.committed.on('rollout_line', event => {
     activePath = event.file
@@ -433,8 +466,8 @@ async function compactCodexClone(
       }],
     }
   } finally {
-    try { terminal.kill() } catch { /* PTY may already have exited. */ }
     await headless.stop()
+    try { terminal.kill() } catch { /* PTY may already have exited. */ }
   }
 }
 
@@ -508,22 +541,7 @@ async function runCodex(
   options: ProbeOptions,
   diagnostics: string[],
 ): Promise<string> {
-  const terminal = pty.spawn(options.codexBinary, [
-    '--sandbox',
-    'read-only',
-    '--ask-for-approval',
-    'never',
-    '--no-alt-screen',
-    'resume',
-    prepared.sessionId,
-  ], terminalOptions(prepared.workspace))
-  const headless = new CodexHeadless({
-    pty: terminal,
-    cwd: prepared.workspace,
-    resumeThreadId: prepared.sessionId,
-    cols: 160,
-    rows: 50,
-  })
+  const { terminal, headless } = await openCodexResume(prepared, options)
   let lastScreen = ''
   headless.on('screen', screen => {
     lastScreen = screen.plain
@@ -535,8 +553,8 @@ async function runCodex(
     await submitCodexPrompt(headless, prompt, marker, diagnostics)
     return await response
   } finally {
-    try { terminal.kill() } catch { /* PTY may already have exited. */ }
     await headless.stop()
+    try { terminal.kill() } catch { /* PTY may already have exited. */ }
   }
 }
 
