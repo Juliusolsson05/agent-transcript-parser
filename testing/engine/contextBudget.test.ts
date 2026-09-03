@@ -9,6 +9,7 @@ import {
 import {
   describeLatestCompaction,
   portableCodexHandoffAfterLine,
+  portableOpencodeHandoffAfterLine,
 } from '../../src/operations/compaction.js'
 import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
 import { resolveCodexTargetProfileFromSources } from '../../src/codex/profile/targetProfile.js'
@@ -216,6 +217,31 @@ describe('context budget fitting', () => {
       ...conversation,
       entries: conversation.entries.slice(0, 2),
     }, 9)).toBeNull()
+  })
+
+  it('accepts OpenCode handoff text only from a completed exported message', () => {
+    const complete = message('assistant', 'Portable OpenCode handoff.', 11)
+    complete.source.provider = 'opencode'
+    complete.source.raw = {
+      info: { role: 'assistant', time: { created: 1, completed: 2 } },
+      parts: [{ type: 'text', text: 'Portable OpenCode handoff.' }],
+    }
+    const conversation: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'opencode',
+      sourceSessionIds: ['ses_source'],
+      entries: [complete],
+    }
+
+    expect(portableOpencodeHandoffAfterLine(conversation, 9)).toMatchObject({
+      summary: 'Portable OpenCode handoff.',
+      completionLine: 11,
+    })
+    complete.source.raw = {
+      info: { role: 'assistant', time: { created: 1 } },
+      parts: [{ type: 'text', text: 'still streaming' }],
+    }
+    expect(portableOpencodeHandoffAfterLine(conversation, 9)).toBeNull()
   })
 
   it('derives character budgets from one documented token policy', () => {

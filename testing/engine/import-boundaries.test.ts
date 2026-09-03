@@ -38,10 +38,13 @@ describe('engine import boundaries', () => {
         if (path.startsWith('codex/') && specifier.includes('/claude/')) {
           failures.push(`${path} imports Claude through ${specifier}`)
         }
+        if (path.startsWith('opencode/') && /\/(?:claude|codex)\//.test(specifier)) {
+          failures.push(`${path} imports another provider through ${specifier}`)
+        }
 
         const isCompositionRoot = path === 'index.ts'
-        const isProviderFile = path.startsWith('claude/') || path.startsWith('codex/')
-        if (!isCompositionRoot && !isProviderFile && /\/(?:claude|codex)\//.test(specifier)) {
+        const isProviderFile = path.startsWith('claude/') || path.startsWith('codex/') || path.startsWith('opencode/')
+        if (!isCompositionRoot && !isProviderFile && /\/(?:claude|codex|opencode)\//.test(specifier)) {
           failures.push(`${path} is provider-neutral but imports ${specifier}`)
         }
       }

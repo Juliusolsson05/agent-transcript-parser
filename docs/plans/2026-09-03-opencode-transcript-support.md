@@ -1,4 +1,4 @@
-Status: In progress
+Status: Complete
 
 # OpenCode transcript support plan
 
@@ -39,6 +39,11 @@ command, without adding pairwise Claude/OpenCode or Codex/OpenCode translators.
 
 ## Verification
 
-- `npm run typecheck`
-- `npm test`
-- `npm run test:package`
+- `npm run check`
+  - Contract check passed.
+  - TypeScript check passed.
+  - 24 test files / 100 tests passed.
+  - Packed artifact exposed all four required public files.
+- Isolated OpenCode 1.18.27 CLI import/export verification passed for both a
+  blank projected session and a projected two-message conversation using
+  temporary XDG state rather than the developer's personal OpenCode database.

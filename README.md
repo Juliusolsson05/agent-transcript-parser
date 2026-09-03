@@ -8,7 +8,8 @@ Claude-to-Codex translator or a Codex-to-Claude translator:
 
 ```text
 Claude ─┐
-Codex  ─┼─> ConversationDocument ─> Claude / Codex / future provider
+Codex  ─┼─> ConversationDocument ─> Claude / Codex / OpenCode / future provider
+OpenCode┤
 Future ─┘
 ```
 
@@ -90,7 +91,38 @@ switch (plan.kind) {
 Codex compaction is durable but provider-encrypted, so another provider needs a
 read-only plaintext handoff turn. Claude compaction is portable only after its
 `isCompactSummary` carrier arrives; the preceding `Conversation compacted`
-boundary is intentionally classified as incomplete.
+boundary is intentionally classified as incomplete. OpenCode exports do not
+expose a portable native compaction payload, so an oversized OpenCode source
+also requires a read-only plaintext handoff from the live provider.
+
+## OpenCode import and export
+
+OpenCode uses one JSON export envelope rather than a JSONL transcript. Decode
+that supported CLI shape directly, then project a neutral conversation into a
+single value suitable for `opencode import`:
+
+```ts
+import {
+  decodeOpencodeConversation,
+  opencodeNativeResumeProjector,
+} from 'agent-transcript-parser'
+
+const conversation = decodeOpencodeConversation(exportedJson)
+const projected = opencodeNativeResumeProjector.projectNativeResume(conversation, {
+  targetSessionId: crypto.randomUUID(),
+  now: new Date().toISOString(),
+  cwd: '/project',
+  cliVersion: '1.18.27',
+  modelProvider: 'anthropic',
+  model: 'claude-sonnet-4',
+})
+
+console.log(projected.values[0])
+```
+
+The package never opens OpenCode's private SQLite database or executes its CLI.
+The host owns export/import execution and temporary-file security; the parser
+owns pure decoding, deterministic native identities, and fidelity reporting.
 
 `fitConversationToCharacterBudget` remains an explicit lossy escape hatch. Its
 result includes `stillExceedsBudget`; callers must not assume that a complete
@@ -189,6 +221,7 @@ Requires Node 20.19 or newer. ESM only.
 src/                    evidence-driven engine
   claude/               Claude classifier, analysis, decoder, projectors
   codex/                Codex classifier, analysis, decoder, projectors
+  opencode/             OpenCode export decoder and native resume projector
   conversation/         provider-neutral protocol
   operations/           stable addresses, clone, rewind
   projection/           shared projection contracts and provenance
