@@ -106,6 +106,39 @@ export function portableCodexHandoffAfterLine(
   return null
 }
 
+/**
+ * Accept an OpenCode portable handoff only after its assistant message is
+ * durably complete in the native export.
+ *
+ * WHY this cannot reuse the Codex completion detector: Codex persists a
+ * separate `task_complete` event carrying the final text, while OpenCode puts
+ * `time.completed` on the assistant message itself. Looking only for a new
+ * assistant entry would race a mid-stream export and project a partial summary.
+ */
+export function portableOpencodeHandoffAfterLine(
+  conversation: ConversationDocument,
+  baselineLine: number,
+): PortableCodexHandoff | null {
+  for (let index = conversation.entries.length - 1; index >= 0; index -= 1) {
+    const entry = conversation.entries[index]
+    if (!entry || entry.source.line <= baselineLine) break
+    if (entry.kind !== 'message' || entry.role !== 'assistant') continue
+    const info = isRecord(entry.source.raw.info) ? entry.source.raw.info : null
+    const time = info && isRecord(info.time) ? info.time : null
+    if (!time || typeof time.completed !== 'number' || !Number.isFinite(time.completed)) continue
+    const summary = entry.content
+      .filter((content): content is Extract<typeof content, { kind: 'text' }> => (
+        content.kind === 'text'
+      ))
+      .map(content => content.text)
+      .join('\n')
+      .trim()
+    if (!summary) continue
+    return { summary, message: entry, completionLine: entry.source.line }
+  }
+  return null
+}
+
 function compactionAvailability(entry: ConversationCompaction): CompactionAvailability {
   if (entry.summarySource === 'encrypted') return 'native-only'
   if (
