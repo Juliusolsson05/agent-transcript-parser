@@ -395,6 +395,50 @@ describe('planConversationContext without source turns', () => {
       .toThrow(ConversationUnfittableError)
   })
 
+  it('drops developer messages for a Claude target and retains them for one that keeps the role', async () => {
+    // The one target-specific decision the planner makes on the ladder's
+    // behalf. Claude's native-resume projector drops every developer- and
+    // system-role message (src/claude/project/nativeResume.ts:212-219), so
+    // retaining them would charge the budget for content deleted on arrival —
+    // and, as the first assertion pair shows, can refuse a switch outright.
+    //
+    // The demonstration has to run on a Codex-sourced conversation because no
+    // Claude fixture contains a developer message at all: Claude Code does not
+    // persist the role, which is the same fact from the other side.
+    const conversation = await codex('codex-sequence-compacted-multi')
+    const tight = Math.floor(estimateConversationCharacters(conversation) * 0.25)
+
+    const toClaude = planConversationContext(conversation, 'claude', tight, { allowSourceTurns: false })
+
+    expect(toClaude.kind).toBe('shrunk')
+    if (toClaude.kind !== 'shrunk') return
+    expect(toClaude.report.retainedDeveloperMessages).toBe(0)
+    expect(toClaude.conversation.entries.some(
+      entry => entry.kind === 'message' && entry.role === 'developer',
+    )).toBe(false)
+    expect(toClaude.estimatedCharacters).toBeLessThanOrEqual(tight)
+
+    // Same conversation, same budget, a target that does persist the role:
+    // retention is honoured even though it makes the conversation unfittable.
+    // Refusing is correct there — the content would really have survived.
+    expect(() => planConversationContext(conversation, 'codex', tight, { allowSourceTurns: false }))
+      .toThrow(ConversationUnfittableError)
+
+    const roomier = Math.floor(estimateConversationCharacters(conversation) * 0.3)
+    const toCodex = planConversationContext(conversation, 'codex', roomier, { allowSourceTurns: false })
+    expect(toCodex.kind).toBe('shrunk')
+    if (toCodex.kind !== 'shrunk') return
+    expect(toCodex.report.retainedDeveloperMessages).toBe(4)
+
+    // An explicit caller option wins over the target default, so a host that
+    // knows better is not locked out by the provider check above.
+    const forced = planConversationContext(conversation, 'claude', roomier, {
+      allowSourceTurns: false,
+      shrink: { keepDeveloperMessages: true },
+    })
+    expect(forced.kind === 'shrunk' ? forced.report.retainedDeveloperMessages : -1).toBe(4)
+  })
+
   it('keeps the existing outcomes when source turns are allowed', async () => {
     const conversation = await codex('codex-sequence-compacted-once')
 

@@ -156,7 +156,7 @@ export function planConversationContext(
   // make every later condition carry an `allowSourceTurns` clause, and the one
   // that got forgotten would spend quota the caller said it does not have.
   if (options.allowSourceTurns === false) {
-    return planWithoutSourceTurns(conversation, budgetCharacters, options.shrink)
+    return planWithoutSourceTurns(conversation, targetProvider, budgetCharacters, options.shrink)
   }
   const latest = describeLatestCompaction(conversation)
   const portability = compactionPortability(conversation.sourceProvider, targetProvider)
@@ -221,9 +221,16 @@ export function planConversationContext(
  *    (91.7 %) keep a median 74.3 % of their characters ahead of the compaction.
  * 3. **Only then shrink.** The ladder is the last resort and reports what it
  *    cost.
+ *
+ * This function is also where the one target-specific shrink decision is made
+ * (`keepDeveloperMessages`, below). That asymmetry is deliberate: the ladder is
+ * provider-neutral by construction and must stay that way, but somebody has to
+ * know what the target persists, and the planner is the only layer here that
+ * has been told which target it is.
  */
 function planWithoutSourceTurns(
   conversation: ConversationDocument,
+  targetProvider: ProviderId,
   budgetCharacters: number,
   shrink: ShrinkOptions | undefined,
 ): ConversationContextPlan {
@@ -259,10 +266,27 @@ function planWithoutSourceTurns(
   // Throws ConversationUnfittableError when even one complete turn is too
   // large. That propagates deliberately: there is no fifth outcome that could
   // honestly describe "we emitted half a turn".
+  // WHY developer retention is switched off for a Claude target: the Claude
+  // native-resume projector drops every developer- and system-role message
+  // outright (src/claude/project/nativeResume.ts:212-219 —
+  // `native-resume.message.<role>.dropped`, "Claude persistence has no observed
+  // native conversation role for it"). Retaining them would therefore charge
+  // the budget for content that is deleted on arrival, and could raise
+  // ConversationUnfittableError on a conversation that in fact fits — the
+  // ladder would refuse a switch to protect messages the target then throws
+  // away. The marker still records that they existed and were omitted, so the
+  // loss census finding 4 warns about is reported rather than silent.
+  //
+  // An explicit caller option wins, so a host that knows better (a Claude fork
+  // that does persist the role, a projector change) is not locked out.
+  const shrinkOptions: ShrinkOptions = {
+    ...shrink,
+    keepDeveloperMessages: shrink?.keepDeveloperMessages ?? (targetProvider !== 'claude'),
+  }
   const { conversation: shrunk, report } = shrinkConversationToBudget(
     stripped.conversation,
     budgetCharacters,
-    shrink,
+    shrinkOptions,
   )
   return {
     kind: 'shrunk',

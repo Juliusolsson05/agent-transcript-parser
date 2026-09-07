@@ -32,17 +32,51 @@ export interface ShrinkOptions {
   maxInputChars?: number
   maxIndexedPrompts?: number
   promptIndexChars?: number
+  /**
+   * Whether rung 4 lifts developer-role messages out of the dropped range and
+   * keeps them after the marker. Defaults to `true`.
+   *
+   * WHY this is an option and not a constant, and WHY the default is `true`:
+   * the census case for retention (finding 4) is about what a *source* thread
+   * contains, but whether retention is worth anything depends on what the
+   * *target* persists — and this module must never know which target that is.
+   * Only the caller does. `true` keeps the provider-neutral behaviour the
+   * evidence supports; a caller whose target discards developer messages sets
+   * `false` so the ladder does not charge budget for content that will be
+   * deleted on arrival. `planConversationContext` is that caller.
+   */
+  keepDeveloperMessages?: boolean
 }
 
 export interface ShrinkReport {
   strippedCompactions: number
   clearedResults: number
+  /**
+   * NET characters saved, i.e. after the replacement placeholder is counted.
+   * Clearing a 4,000-character output that is replaced by a 58-character
+   * placeholder reports 3,942, not 4,000 — the report is the host's only
+   * evidence of what the switch cost the user, so it states the real delta.
+   * The same holds for `trimmedChars` and its truncation marker.
+   */
   clearedChars: number
   trimmedInputs: number
+  /** NET characters saved; see `clearedChars`. */
   trimmedChars: number
   droppedEntries: number
+  /**
+   * Every dropped user message, including ones that carried no text (an image
+   * or document prompt). The prompt index in the marker lists only the ones
+   * that had text, so `promptIndexLength` can be zero while this is not.
+   */
   droppedTurns: number
-  promptIndexChars: number
+  /**
+   * Developer-role messages rung 4 lifted out of the dropped range and kept.
+   * Zero when `keepDeveloperMessages` was false — in which case they were
+   * dropped with their turns and are counted in `droppedEntries`.
+   */
+  retainedDeveloperMessages: number
+  /** Characters the marker's prompt index occupies, after budget trimming. */
+  promptIndexLength: number
   estimatedCharactersBefore: number
   estimatedCharactersAfter: number
   budgetCharacters: number
@@ -69,10 +103,14 @@ export class ConversationUnfittableError extends Error {
   readonly report: ShrinkReport
 
   constructor(report: ShrinkReport) {
-    super(
-      `Conversation cannot fit the target budget of ${report.budgetCharacters} characters: ` +
-      `the smallest complete suffix the ladder can produce is ${report.estimatedCharactersAfter} characters.`,
-    )
+    // Two genuinely different failures reach here and the message must not
+    // conflate them: a conversation with no earlier boundary to cut back to was
+    // never cut at all, so calling its full estimate "the smallest suffix the
+    // ladder can produce" would misdescribe what was tried.
+    const cause = report.droppedEntries === 0 && report.droppedTurns === 0
+      ? `it has no earlier turn boundary to cut back to, and its retained content is ${report.estimatedCharactersAfter} characters`
+      : `the smallest complete suffix the ladder can produce is ${report.estimatedCharactersAfter} characters`
+    super(`Conversation cannot fit the target budget of ${report.budgetCharacters} characters: ${cause}.`)
     this.name = 'ConversationUnfittableError'
     this.report = report
   }
@@ -127,6 +165,7 @@ const DEFAULTS: Required<ShrinkOptions> = {
   maxInputChars: 8_000,
   maxIndexedPrompts: 40,
   promptIndexChars: 200,
+  keepDeveloperMessages: true,
 }
 
 /**
@@ -188,7 +227,11 @@ export function clearToolResults(
     const entry = entries[index]!
     if (entry.kind !== 'tool-result') continue
     const before = estimateEntryCharacters(entry)
-    const replaced: ConversationToolResult = { ...entry, output: clearedPlaceholder(before) }
+    // The number quoted to the model is the RAW payload length it lost, not the
+    // serialized budget estimate: a reader of "cleared: 4002 characters" is
+    // being told how much output vanished, and JSON quoting and escaping are
+    // the parser's arithmetic, not theirs.
+    const replaced: ConversationToolResult = { ...entry, output: clearedPlaceholder(rawLength(entry.output)) }
     const after = estimateEntryCharacters(replaced)
     // WHY a net-savings guard rather than clearing unconditionally: the
     // placeholder is itself ~58 characters, so clearing a short output would
@@ -259,16 +302,26 @@ export function trimToolInputs(
  * 1. **Never cut inside a turn.** The retained history always begins at a safe
  *    resume boundary (a user message or a compaction), so the target never
  *    receives an orphaned tool result or a half-finished assistant reply.
- * 2. **Never drop a developer message.** Census finding 4: Codex developer
- *    messages are 36.9 % of the repeatedly-compacted fixture's characters, and
- *    they are the replacement history and standing user instructions that
- *    survive a remote compaction — on a compacted Codex thread they are the
- *    ONLY plaintext left in the file. A ladder that dropped them would delete
- *    the conversation while reporting that it merely trimmed some turns. They
- *    are therefore retained after the marker, in their original relative order,
- *    and they still count against the budget: if the developer messages alone
- *    exceed it, `stillExceedsBudget` is the honest answer and the caller throws
- *    rather than pretending a lossier cut would have helped.
+ * 2. **Never drop a developer message, unless the caller says the target will
+ *    discard it anyway.** Census finding 4: Codex developer messages are 36.9 %
+ *    of the repeatedly-compacted fixture's characters, and they are the
+ *    replacement history and standing user instructions that survive a remote
+ *    compaction — on a compacted Codex thread they are the ONLY plaintext left
+ *    in the file. A ladder that dropped them would delete the conversation
+ *    while reporting that it merely trimmed some turns. They are therefore
+ *    retained after the marker, in their original relative order, and they
+ *    still count against the budget: if they alone exceed it,
+ *    `stillExceedsBudget` is the honest answer and the caller throws rather
+ *    than pretending a lossier cut would have helped.
+ *
+ *    `keepDeveloperMessages: false` inverts that, and exists because retention
+ *    is only worth budget if the target persists the role at all. When it is
+ *    false, developer messages are dropped with their turns like any other
+ *    entry, cost nothing, and are counted in `droppedEntries` — but the marker
+ *    still says how many were lost, because a silent deletion of the only
+ *    plaintext in a compacted thread is exactly what invariant 2 exists to
+ *    prevent. Deciding which targets those are is the planner's job; this
+ *    module never learns a provider name.
  */
 export function dropOldestTurns(
   conversation: ConversationDocument,
@@ -278,11 +331,13 @@ export function dropOldestTurns(
   conversation: ConversationDocument
   droppedEntries: number
   droppedTurns: number
-  promptIndexChars: number
+  retainedDeveloperMessages: number
+  promptIndexLength: number
   stillExceedsBudget: boolean
 } {
   const maxIndexedPrompts = options.maxIndexedPrompts ?? DEFAULTS.maxIndexedPrompts
   const promptIndexChars = options.promptIndexChars ?? DEFAULTS.promptIndexChars
+  const keepDeveloperMessages = options.keepDeveloperMessages ?? DEFAULTS.keepDeveloperMessages
   const entries = conversation.entries
   const costs = entries.map(estimateEntryCharacters)
   const total = costs.reduce((sum, cost) => sum + cost, 0)
@@ -291,20 +346,25 @@ export function dropOldestTurns(
       conversation,
       droppedEntries: 0,
       droppedTurns: 0,
-      promptIndexChars: 0,
+      retainedDeveloperMessages: 0,
+      promptIndexLength: 0,
       stillExceedsBudget: false,
     }
   }
 
   // `suffixCost[i]` is what entries[i..] costs; `developerPrefixCost[i]` is
   // what the developer messages BEFORE i cost, because those survive the cut
-  // wherever it lands. Retaining at boundary i therefore costs the sum of the
-  // two, and that sum is non-increasing in i — a developer message moves from
-  // one accumulator to the other as i grows, never appearing in both — so the
-  // first boundary that fits, scanning oldest to newest, keeps the most
-  // history. Precomputing both makes the search below O(1) per boundary
-  // instead of O(n); the largest local transcript in the census has 13,577
-  // entries and roughly a thousand boundaries.
+  // wherever it lands (and is all zeros when they do not). Retaining at
+  // boundary i therefore costs the sum of the two, and that sum is
+  // non-increasing in i — a developer message moves from one accumulator to
+  // the other as i grows, never appearing in both — so the FIRST boundary that
+  // fits, scanning oldest to newest, keeps the most history and the loop below
+  // can stop there.
+  //
+  // Precomputing both makes the *cost test* per boundary O(1) rather than O(n).
+  // Building the cut itself is still O(n), but it happens only for boundaries
+  // that already passed the cost test — in practice once, and at most a couple
+  // of times when the marker's own headline does not fit.
   const suffixCost = new Array<number>(entries.length + 1).fill(0)
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     suffixCost[index] = suffixCost[index + 1]! + costs[index]!
@@ -312,7 +372,7 @@ export function dropOldestTurns(
   const developerPrefixCost = new Array<number>(entries.length + 1).fill(0)
   for (let index = 0; index < entries.length; index += 1) {
     developerPrefixCost[index + 1] = developerPrefixCost[index]! +
-      (isDeveloperMessage(entries[index]!) ? costs[index]! : 0)
+      (keepDeveloperMessages && isDeveloperMessage(entries[index]!) ? costs[index]! : 0)
   }
 
   const boundaries: number[] = []
@@ -329,6 +389,7 @@ export function dropOldestTurns(
       budgetCharacters - retained,
       maxIndexedPrompts,
       promptIndexChars,
+      keepDeveloperMessages,
     )
     // The marker is budget-aware (see assembleCut), but its irreducible
     // headline may still not fit at this boundary. Fall through to the next
@@ -346,11 +407,19 @@ export function dropOldestTurns(
       conversation,
       droppedEntries: 0,
       droppedTurns: 0,
-      promptIndexChars: 0,
+      retainedDeveloperMessages: 0,
+      promptIndexLength: 0,
       stillExceedsBudget: true,
     }
   }
-  const cut = assembleCut(conversation, lastBoundary, 0, maxIndexedPrompts, promptIndexChars)
+  const cut = assembleCut(
+    conversation,
+    lastBoundary,
+    0,
+    maxIndexedPrompts,
+    promptIndexChars,
+    keepDeveloperMessages,
+  )
   return { ...cut.result, stillExceedsBudget: true }
 }
 
@@ -373,7 +442,8 @@ export function shrinkConversationToBudget(
     trimmedChars: 0,
     droppedEntries: 0,
     droppedTurns: 0,
-    promptIndexChars: 0,
+    retainedDeveloperMessages: 0,
+    promptIndexLength: 0,
     estimatedCharactersBefore: estimateConversationCharacters(conversation),
     estimatedCharactersAfter: 0,
     budgetCharacters,
@@ -403,7 +473,8 @@ export function shrinkConversationToBudget(
   const dropped = dropOldestTurns(current, budgetCharacters, options)
   report.droppedEntries = dropped.droppedEntries
   report.droppedTurns = dropped.droppedTurns
-  report.promptIndexChars = dropped.promptIndexChars
+  report.retainedDeveloperMessages = dropped.retainedDeveloperMessages
+  report.promptIndexLength = dropped.promptIndexLength
   current = dropped.conversation
 
   report.estimatedCharactersAfter = estimateConversationCharacters(current)
@@ -415,6 +486,16 @@ export function shrinkConversationToBudget(
 
 function clearedPlaceholder(chars: number): string {
   return `[tool output cleared during provider switch: ${chars} characters]`
+}
+
+/**
+ * The payload length a reader would recognise: a string output's own length,
+ * and the serialized length of anything else (Claude persists structured
+ * `tool_result` content, Codex a list). Deliberately NOT
+ * `estimateEntryCharacters`, which adds JSON quoting the model never sees.
+ */
+function rawLength(output: unknown): number {
+  return typeof output === 'string' ? output.length : printableLength(output)
 }
 
 function userTurnStarts(entries: readonly ConversationEntry[]): number[] {
@@ -429,30 +510,44 @@ function userTurnStarts(entries: readonly ConversationEntry[]): number[] {
  * The index at which the recent-turn protection begins; everything from here on
  * is off limits to rungs 2 and 3.
  *
- * WHY the protection is skipped entirely when the conversation has at most
- * `keepRecentTurns` user turns, rather than protecting all of them: the rule
- * exists to keep "what I was just doing" intact, which is a statement about the
- * boundary between old history and recent work. A conversation with no such
- * boundary would otherwise be 100 % protected and the whole ladder would become
- * a no-op. That is not hypothetical — `claude-sequence-oversized` is a real
- * transcript with 67 entries, exactly ONE user message, 92.1 % of its
+ * Three cases, and the two boundaries between them are the whole point.
+ *
+ * **More than `keepRecentTurns` turns** — the ordinary case, and the rule as
+ * specified: protect the last `keepRecentTurns` turns.
+ *
+ * **Exactly one turn** — protect nothing. The rule exists to keep "what I was
+ * just doing" intact, which is a statement about the boundary between old
+ * history and recent work; a single-turn conversation has no such boundary, so
+ * applying it literally protects 100 % of the transcript and makes the entire
+ * ladder a no-op. That is not hypothetical: `claude-sequence-oversized` is a
+ * real transcript with 67 entries, exactly ONE user message, 92.1 % of its
  * characters in tool results, and 1.11× the Codex budget. The census counts it
  * among the 45 of 91 oversized transcripts that clearing tool results alone
  * fixes, and that population measurement cleared every result with no
  * recent-turn protection at all. Declaring such a session unfittable while
- * nine tenths of it is stale tool output would be a worse answer than the one
- * the evidence supports.
+ * nine tenths of it is stale tool output would be a worse answer than the
+ * evidence supports.
  *
- * What is kept in the relaxed case is the weaker, still-real guarantee that
- * comes from the walk order: rungs 2 and 3 go oldest first and stop the instant
- * the estimate fits, so the newest outputs are always the last to go.
+ * **Two to `keepRecentTurns` turns** — protect the final turn only. WHY not
+ * "protect nothing" here too, which is the simpler rule: at exactly
+ * `keepRecentTurns` turns that would make the NEWEST turn clearable, which is
+ * the precise thing the protection exists to forbid, and it would do so at the
+ * moment the option's value is met rather than exceeded — a discontinuity with
+ * no argument behind it. Protecting the final turn keeps the guarantee that
+ * matters (the work in progress survives) while still letting the ladder reach
+ * the older turns, which is what the single-turn case showed is necessary.
+ *
+ * In every case the walk order supplies a weaker guarantee underneath: rungs 2
+ * and 3 go oldest first and stop the instant the estimate fits, so the newest
+ * outputs are always the last to go.
  */
 function protectedFromIndex(
   entries: readonly ConversationEntry[],
   keepRecentTurns: number,
 ): number {
   const starts = userTurnStarts(entries)
-  if (keepRecentTurns <= 0 || starts.length <= keepRecentTurns) return entries.length
+  if (keepRecentTurns <= 0 || starts.length <= 1) return entries.length
+  if (starts.length <= keepRecentTurns) return starts[starts.length - 1] ?? entries.length
   return starts[starts.length - keepRecentTurns] ?? entries.length
 }
 
@@ -472,34 +567,93 @@ function protectedFromIndex(
  *
  * A raw string input is handled directly because a modern Codex
  * `custom_tool_call` persists its input as a string in `payload.input`, and the
- * decoded entry keeps it that way; `estimateEntryCharacters` serializes both
- * shapes through the same `printableLength`, so the arithmetic here and the
- * budget arithmetic there cannot disagree.
+ * decoded entry keeps it that way.
+ *
+ * WHY both branches measure with `printableLength` and treat `maxInputChars` as
+ * a cap on the SERIALIZED result including the truncation marker: the budget
+ * this rung is trying to satisfy is
+ * `estimateEntryCharacters` — `printableLength({ name, input })` — so a cap
+ * applied to a raw string's own `.length` is a different quantity from the one
+ * being budgeted, and the two silently disagree by the quoting and escaping
+ * that JSON adds. Measuring the same way in both places is what makes "the
+ * arithmetic here and the budget arithmetic there cannot disagree" true rather
+ * than approximately true. Because escaping is not linear in the number of
+ * characters kept, the keep length is found by measurement (a binary search on
+ * the serialized result) rather than by subtraction.
+ *
+ * OUT OF SCOPE, deliberately: strings nested inside a member object or array
+ * are not trimmed, only the record's own string-valued members. A tool input
+ * whose bulk is buried two levels down is left to the drop rung. Recursing
+ * would mean deciding which nested key is safe to gut without knowing any
+ * tool's schema, which is exactly the provider knowledge this module does not
+ * have.
  */
 function trimToolCallInput(input: unknown, maxInputChars: number): unknown | null {
   if (typeof input === 'string') {
-    if (input.length <= maxInputChars) return null
-    const candidate = truncateWithMarker(input, maxInputChars)
-    return candidate.length < input.length ? candidate : null
+    if (printableLength(input) <= maxInputChars) return null
+    return truncateToSerializedCap(input, maxInputChars)
   }
   if (typeof input !== 'object' || input === null || Array.isArray(input)) return null
-  if (printableLength(input) <= maxInputChars) return null
+  const original = input as Record<string, unknown>
+  if (printableLength(original) <= maxInputChars) return null
 
-  const next: Record<string, unknown> = { ...(input as Record<string, unknown>) }
+  const next: Record<string, unknown> = { ...original }
   const stringKeys = Object.keys(next)
     .filter(key => typeof next[key] === 'string')
     .sort((a, b) => (next[b] as string).length - (next[a] as string).length)
   let changed = false
   for (const key of stringKeys) {
-    const serialized = printableLength(next)
-    if (serialized <= maxInputChars) break
+    if (printableLength(next) <= maxInputChars) break
     const value = next[key] as string
-    const candidate = truncateWithMarker(value, Math.max(0, value.length - (serialized - maxInputChars)))
-    if (candidate.length >= value.length) continue
-    next[key] = candidate
-    changed = true
+    // Largest truncation of THIS member that brings the whole object under the
+    // cap. When even an empty member cannot (the record's keys and non-string
+    // values already exceed it), take the smallest form anyway and let the next
+    // member — and ultimately the drop rung — deal with the remainder.
+    let low = 0
+    let high = value.length
+    let best: string | null = null
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2)
+      const candidate = truncateWithMarker(value, middle)
+      next[key] = candidate
+      if (printableLength(next) <= maxInputChars) {
+        best = candidate
+        low = middle + 1
+      } else {
+        high = middle - 1
+      }
+    }
+    const chosen = best ?? truncateWithMarker(value, 0)
+    if (chosen.length < value.length) {
+      next[key] = chosen
+      changed = true
+    } else {
+      next[key] = value
+    }
   }
   return changed ? next : null
+}
+
+/**
+ * The longest truncation of `text` whose serialized form fits `cap`, or `null`
+ * when not even the bare marker does.
+ */
+function truncateToSerializedCap(text: string, cap: number): string | null {
+  if (printableLength(truncateWithMarker(text, 0)) > cap) return null
+  let low = 0
+  let high = text.length
+  let best = truncateWithMarker(text, 0)
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2)
+    const candidate = truncateWithMarker(text, middle)
+    if (printableLength(candidate) <= cap) {
+      best = candidate
+      low = middle + 1
+    } else {
+      high = middle - 1
+    }
+  }
+  return printableLength(best) < printableLength(text) ? best : null
 }
 
 function truncateWithMarker(text: string, keep: number): string {
@@ -509,6 +663,10 @@ function truncateWithMarker(text: string, keep: number): string {
 
 function isDeveloperMessage(entry: ConversationEntry): entry is ConversationMessage {
   return entry.kind === 'message' && entry.role === 'developer'
+}
+
+function isUserMessage(entry: ConversationEntry): entry is ConversationMessage {
+  return entry.kind === 'message' && entry.role === 'user'
 }
 
 function promptText(entry: ConversationEntry): string {
@@ -527,7 +685,8 @@ interface AssembledCut {
     conversation: ConversationDocument
     droppedEntries: number
     droppedTurns: number
-    promptIndexChars: number
+    retainedDeveloperMessages: number
+    promptIndexLength: number
   }
 }
 
@@ -549,29 +708,46 @@ function assembleCut(
   room: number,
   maxIndexedPrompts: number,
   promptIndexChars: number,
+  keepDeveloperMessages: boolean,
 ): AssembledCut {
   const dropped = conversation.entries.slice(0, startIndex)
   const kept = conversation.entries.slice(startIndex)
-  const retainedDevelopers = dropped.filter(isDeveloperMessage)
+  const developers = dropped.filter(isDeveloperMessage)
+  const retainedDevelopers = keepDeveloperMessages ? developers : []
   const removedEntries = dropped.length - retainedDevelopers.length
-  const prompts = dropped
-    .filter(entry => entry.kind === 'message' && entry.role === 'user')
-    .map(promptText)
-    .filter(text => text.length > 0)
+  // Every dropped user message counts as a dropped turn, including one that
+  // carried only an image or a document: the user asked something there, and a
+  // count that quietly excluded it would understate what the switch cost. The
+  // prompt index below lists only the ones that left text to quote.
+  const droppedTurns = dropped.filter(isUserMessage).length
+  const prompts = dropped.filter(isUserMessage).map(promptText).filter(text => text.length > 0)
   const carried = [...dropped].reverse().find(
     (entry): entry is ConversationCompaction => (
       entry.kind === 'compaction' && entry.summary.trim().length > 0
     ),
   )?.summary
 
+  const compose = (
+    withCarried: string | undefined,
+    shownPrompts: readonly string[],
+  ): { text: string; indexChars: number } => composeMarkerSummary({
+    carried: withCarried,
+    removedEntries,
+    droppedTurns,
+    prompts,
+    shown: shownPrompts,
+    developerMessages: developers.length,
+    developersRetained: keepDeveloperMessages,
+  })
+
   let shown = prompts.slice(-maxIndexedPrompts).map(text => text.slice(0, promptIndexChars))
-  let summary = composeMarkerSummary(carried, removedEntries, prompts, shown, retainedDevelopers.length)
+  let summary = compose(carried, shown)
   while (summary.text.length > room && shown.length > 0) {
     shown = shown.slice(1)
-    summary = composeMarkerSummary(carried, removedEntries, prompts, shown, retainedDevelopers.length)
+    summary = compose(carried, shown)
   }
   if (summary.text.length > room && carried !== undefined) {
-    summary = composeMarkerSummary(undefined, removedEntries, prompts, shown, retainedDevelopers.length)
+    summary = compose(undefined, shown)
   }
 
   const marker: ConversationCompaction = {
@@ -586,29 +762,39 @@ function assembleCut(
     result: {
       conversation: { ...conversation, entries: [marker, ...retainedDevelopers, ...kept] },
       droppedEntries: removedEntries,
-      droppedTurns: prompts.length,
-      promptIndexChars: summary.indexChars,
+      droppedTurns,
+      retainedDeveloperMessages: retainedDevelopers.length,
+      promptIndexLength: summary.indexChars,
     },
   }
 }
 
-function composeMarkerSummary(
-  carried: string | undefined,
-  removedEntries: number,
-  prompts: readonly string[],
-  shown: readonly string[],
-  retainedDevelopers: number,
-): { text: string; indexChars: number } {
+function composeMarkerSummary(input: {
+  carried: string | undefined
+  removedEntries: number
+  droppedTurns: number
+  prompts: readonly string[]
+  shown: readonly string[]
+  developerMessages: number
+  developersRetained: boolean
+}): { text: string; indexChars: number } {
+  const { carried, removedEntries, droppedTurns, prompts, shown } = input
   const offset = prompts.length - shown.length
   const index = shown.map((text, position) => `${offset + position + 1}. ${text}`).join('\n')
-  const developerNote = retainedDevelopers > 0
-    ? ` The ${retainedDevelopers} developer message${retainedDevelopers === 1 ? '' : 's'} that preceded the cut are retained immediately below; on a compacted thread they are the only plaintext history left.`
-    : ''
+  // The count is stated whether or not they were kept. A reader who sees a
+  // compacted thread arrive with no developer content needs to know it existed
+  // and where it went; the promise of retention is made only when it is true.
+  const plural = input.developerMessages === 1 ? '' : 's'
+  const developerNote = input.developerMessages === 0
+    ? ''
+    : input.developersRetained
+      ? ` The ${input.developerMessages} developer message${plural} that preceded the cut are retained immediately below this marker; on a compacted thread they are the only plaintext history left.`
+      : ` ${input.developerMessages} developer message${plural} preceded the cut and were omitted with their turns, because the target does not persist a developer role.`
   const indexNote = shown.length === 0
     ? ''
     : ` The earlier prompts, oldest first${prompts.length > shown.length ? ` (last ${shown.length} shown)` : ''}:\n${index}`
   const headline =
-    `[Provider switch omitted ${removedEntries} earlier entries across ${prompts.length} user turns ` +
+    `[Provider switch omitted ${removedEntries} earlier entries across ${droppedTurns} user turns ` +
     `so the session fits the target model.${developerNote} ` +
     `The retained history begins at the next complete user turn.${indexNote}]`
   return {
