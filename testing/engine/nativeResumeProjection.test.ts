@@ -5,7 +5,14 @@ import { decodeClaudeConversation } from '../../src/claude/conversation/decode.j
 import { projectClaudeNativeResume } from '../../src/claude/project/nativeResume.js'
 import { projectCodexNativeResume } from '../../src/codex/project/nativeResume.js'
 import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
+import { shrinkConversationToBudget } from '../../src/operations/shrink.js'
+import { estimateConversationCharacters } from '../../src/operations/estimate.js'
 import { validateRollout } from '../codex-validator/src/validate.js'
+import {
+  CENSUS_OVERSIZED_TURNS_PAYLOADS,
+  claude,
+  withCensusToolPayloads,
+} from './fixtureConversations.js'
 
 const now = '2026-07-20T12:00:00.000Z'
 
@@ -532,6 +539,69 @@ describe('native-resume projection is distinct from archive projection', () => {
 
     expect(sameProvider.values[0]?.message).toMatchObject({ content: [{ type: 'future_block', payload: 'kept' }] })
     expect(crossProvider.values).toEqual([])
+  })
+})
+
+// Structural acceptance for the shrink ladder's output. The ladder invents two
+// things no decoder ever produces: a `tool-result` whose output is a cleared
+// placeholder, and a `compaction` entry with `summarySource: 'synthetic'`. The
+// design says no projector rule needs to change to carry them — this is the
+// test that says so out loud. Semantic acceptance is the live probe's job
+// (Stage 7); all this proves is that both targets emit valid native shapes.
+describe('native-resume projection of a shrunk conversation', () => {
+  it('projects cleared results and the drop marker into Codex and Claude shapes', async () => {
+    const conversation = withCensusToolPayloads(
+      await claude('claude-sequence-oversized-turns'),
+      CENSUS_OVERSIZED_TURNS_PAYLOADS,
+    )
+    const { conversation: shrunk, report } = shrinkConversationToBudget(
+      conversation,
+      Math.floor(estimateConversationCharacters(conversation) * 0.25),
+    )
+    // Guard the premise: if a future change stops the ladder from clearing or
+    // dropping here, the assertions below would pass vacuously.
+    expect(report.clearedResults).toBeGreaterThan(0)
+    expect(report.droppedTurns).toBeGreaterThan(0)
+
+    const codexResult = projectCodexNativeResume(shrunk, {
+      targetSessionId: '00000000-0000-4000-8000-000000000001',
+      now,
+      cwd: '/fixture/project',
+      cliVersion: '0.153.4',
+      modelProvider: 'openai',
+      model: 'gpt-6-astra',
+    })
+
+    // The synthetic marker becomes an ordinary developer handoff, the shape a
+    // foreign plaintext summary already took before this feature existed.
+    expect(codexResult.values.some(value => (
+      value.type === 'response_item' &&
+      (value.payload as { role?: string } | undefined)?.role === 'developer'
+    ))).toBe(true)
+    // Nothing about a cleared output makes the projector give up on a tool
+    // cycle: a placeholder is just a short output.
+    expect(codexResult.report.changes.filter(change => (
+      change.kind === 'dropped' && change.code.includes('tool')
+    ))).toEqual([])
+    expect(validateRollout(codexResult.values)).toMatchObject({ ok: true, errorCount: 0 })
+
+    const claudeResult = projectClaudeNativeResume(shrunk, {
+      targetSessionId: '00000000-0000-4000-8000-000000000002',
+      now,
+      cwd: '/fixture/project',
+      version: '2.1.261',
+      model: 'claude-fable-5-1[1m]',
+    })
+
+    expect(claudeResult.values.some(value => (
+      value.type === 'system' && value.subtype === 'compact_boundary'
+    ))).toBe(true)
+    expect(claudeResult.values.some(value => (
+      (value as { isCompactSummary?: boolean }).isCompactSummary === true
+    ))).toBe(true)
+    expect(claudeResult.report.changes.filter(change => (
+      change.kind === 'dropped' && change.code.includes('tool')
+    ))).toEqual([])
   })
 })
 

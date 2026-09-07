@@ -8,6 +8,22 @@ import {
   conversationAfterLatestPortableCompaction,
   describeLatestCompaction,
 } from './compaction.js'
+import {
+  estimateConversationCharacters,
+  estimateEntryCharacters,
+  isSafeResumeBoundary,
+  lastSafeBoundary,
+  nextSafeBoundary,
+} from './estimate.js'
+import { shrinkConversationToBudget, stripNativeOnlyCompactions } from './shrink.js'
+import type { ShrinkOptions, ShrinkReport } from './shrink.js'
+
+// WHY the estimator is re-exported rather than moved outright: it has been part
+// of this module's published surface since the first context-budget release and
+// every host imports it from the package root. The implementation now lives in
+// operations/estimate.ts so the shrink ladder can share it without importing
+// the planner (which would make the dependency circular).
+export { estimateConversationCharacters } from './estimate.js'
 
 export const DEFAULT_CHARACTERS_PER_TOKEN = 2.5
 export const DEFAULT_CONTEXT_RESERVE_FRACTION = 0.1
@@ -58,6 +74,43 @@ export type ConversationContextPlan =
       budgetCharacters: number
       overflowCharacters: number
     }
+  /**
+   * The source's own compaction carried nothing the target can read, but the
+   * records it summarized are still on disk and they fit. Only reachable with
+   * `allowSourceTurns: false`.
+   */
+  | {
+      kind: 'raw-history'
+      conversation: ConversationDocument
+      estimatedCharacters: number
+      budgetCharacters: number
+      strippedCompactions: number
+    }
+  /**
+   * The deterministic ladder had to remove content. `report` is the complete
+   * account of what it cost, because design principle 3 is that no lossy step
+   * is silent. Only reachable with `allowSourceTurns: false`.
+   */
+  | {
+      kind: 'shrunk'
+      conversation: ConversationDocument
+      estimatedCharacters: number
+      budgetCharacters: number
+      report: ShrinkReport
+    }
+
+export interface PlanConversationContextOptions {
+  /**
+   * WHY this defaults to true: every existing caller relies on the four
+   * original outcomes, two of which instruct the host to run a live turn on the
+   * source (`requires-portable-handoff` and `requires-compaction`). Flipping
+   * the default would silently change what those callers do at the exact moment
+   * a provider switch is under way. A host that cannot or will not spend source
+   * quota passes false and receives only outcomes it can execute alone.
+   */
+  allowSourceTurns?: boolean
+  shrink?: ShrinkOptions
+}
 
 export interface ContextCharacterBudgetOptions {
   effectiveContextPercent?: number
@@ -93,8 +146,18 @@ export function planConversationContext(
   conversation: ConversationDocument,
   targetProvider: ProviderId,
   budgetCharacters: number,
+  options: PlanConversationContextOptions = {},
 ): ConversationContextPlan {
   assertCharacterBudget(budgetCharacters, 'planConversationContext')
+  // WHY this is the first statement and not a branch woven into the logic
+  // below: the two paths answer different questions. The default path asks
+  // "what must the source do before this conversation can move?"; this one asks
+  // "what can be moved without the source at all?". Interleaving them would
+  // make every later condition carry an `allowSourceTurns` clause, and the one
+  // that got forgotten would spend quota the caller said it does not have.
+  if (options.allowSourceTurns === false) {
+    return planWithoutSourceTurns(conversation, targetProvider, budgetCharacters, options.shrink)
+  }
   const latest = describeLatestCompaction(conversation)
   const portability = compactionPortability(conversation.sourceProvider, targetProvider)
 
@@ -138,6 +201,102 @@ export function planConversationContext(
   }
 }
 
+/**
+ * The `allowSourceTurns: false` planner.
+ *
+ * Ordering matters and is the whole design:
+ *
+ * 1. **Slice at the latest portable compaction first.** A plaintext summary the
+ *    source wrote has already replaced everything before it — native resume no
+ *    longer sends those turns to the model. Stripping before slicing could
+ *    resurrect records the source itself evicted, and the target would then see
+ *    both the summary and the history it summarizes.
+ * 2. **Then strip what the target cannot read.** An encrypted Codex carrier, an
+ *    `incomplete` boundary placeholder and a `rejected` rate-limit carrier all
+ *    convey nothing across providers, while the records they claim to summarize
+ *    are still present. Removing them is what turns the old
+ *    `requires-portable-handoff` outcome — which cost a live source turn — into
+ *    `raw-history`, which costs nothing. Census finding 6 says this is the
+ *    common case, not the exotic one: 211 of 230 single-compaction rollouts
+ *    (91.7 %) keep a median 74.3 % of their characters ahead of the compaction.
+ * 3. **Only then shrink.** The ladder is the last resort and reports what it
+ *    cost.
+ *
+ * This function is also where the one target-specific shrink decision is made
+ * (`keepDeveloperMessages`, below). That asymmetry is deliberate: the ladder is
+ * provider-neutral by construction and must stay that way, but somebody has to
+ * know what the target persists, and the planner is the only layer here that
+ * has been told which target it is.
+ */
+function planWithoutSourceTurns(
+  conversation: ConversationDocument,
+  targetProvider: ProviderId,
+  budgetCharacters: number,
+  shrink: ShrinkOptions | undefined,
+): ConversationContextPlan {
+  const latest = describeLatestCompaction(conversation)
+  const sliced = conversationAfterLatestPortableCompaction(conversation)
+  const stripped = stripNativeOnlyCompactions(sliced)
+  const estimatedCharacters = estimateConversationCharacters(stripped.conversation)
+
+  if (estimatedCharacters <= budgetCharacters) {
+    if (stripped.stripped > 0) {
+      return {
+        kind: 'raw-history',
+        conversation: stripped.conversation,
+        estimatedCharacters,
+        budgetCharacters,
+        strippedCompactions: stripped.stripped,
+      }
+    }
+    // Nothing was stripped, so this is one of the two pre-existing outcomes and
+    // must stay reported as such: hosts label the strategy from the plan kind,
+    // and a switch that lost nothing should not read as one that did.
+    return sliced === conversation || latest === null
+      ? { kind: 'ready', conversation, estimatedCharacters, budgetCharacters }
+      : {
+          kind: 'existing-compaction',
+          conversation: sliced,
+          estimatedCharacters,
+          budgetCharacters,
+          compactionSourceLine: latest.entry.source.line,
+        }
+  }
+
+  // Throws ConversationUnfittableError when even one complete turn is too
+  // large. That propagates deliberately: there is no fifth outcome that could
+  // honestly describe "we emitted half a turn".
+  // WHY developer retention is switched off for a Claude target: the Claude
+  // native-resume projector drops every developer- and system-role message
+  // outright (src/claude/project/nativeResume.ts:212-219 —
+  // `native-resume.message.<role>.dropped`, "Claude persistence has no observed
+  // native conversation role for it"). Retaining them would therefore charge
+  // the budget for content that is deleted on arrival, and could raise
+  // ConversationUnfittableError on a conversation that in fact fits — the
+  // ladder would refuse a switch to protect messages the target then throws
+  // away. The marker still records that they existed and were omitted, so the
+  // loss census finding 4 warns about is reported rather than silent.
+  //
+  // An explicit caller option wins, so a host that knows better (a Claude fork
+  // that does persist the role, a projector change) is not locked out.
+  const shrinkOptions: ShrinkOptions = {
+    ...shrink,
+    keepDeveloperMessages: shrink?.keepDeveloperMessages ?? (targetProvider !== 'claude'),
+  }
+  const { conversation: shrunk, report } = shrinkConversationToBudget(
+    stripped.conversation,
+    budgetCharacters,
+    shrinkOptions,
+  )
+  return {
+    kind: 'shrunk',
+    conversation: shrunk,
+    estimatedCharacters: report.estimatedCharactersAfter,
+    budgetCharacters,
+    report,
+  }
+}
+
 export function assessConversationContextBudget(
   conversation: ConversationDocument,
   budgetCharacters: number,
@@ -159,15 +318,6 @@ export function conversationAfterLatestCompaction(
   conversation: ConversationDocument,
 ): ConversationDocument {
   return conversationAfterLatestPortableCompaction(conversation)
-}
-
-export function estimateConversationCharacters(
-  conversation: ConversationDocument,
-): number {
-  return conversation.entries.reduce(
-    (total, entry) => total + estimateEntryCharacters(entry),
-    0,
-  )
 }
 
 export function fitConversationToCharacterBudget(
@@ -260,48 +410,5 @@ export function fitConversationToCharacterBudget(
 function assertCharacterBudget(budgetCharacters: number, caller: string): void {
   if (!Number.isSafeInteger(budgetCharacters) || budgetCharacters <= 0) {
     throw new Error(`${caller} requires a positive integer budget.`)
-  }
-}
-
-function isSafeResumeBoundary(entry: ConversationEntry): boolean {
-  return entry.kind === 'compaction' || (
-    entry.kind === 'message' && entry.role === 'user'
-  )
-}
-
-function nextSafeBoundary(entries: readonly ConversationEntry[], from: number): number {
-  for (let index = from; index < entries.length; index += 1) {
-    const entry = entries[index]
-    if (entry && isSafeResumeBoundary(entry)) return index
-  }
-  return entries.length
-}
-
-function lastSafeBoundary(entries: readonly ConversationEntry[]): number {
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    const entry = entries[index]
-    if (entry && isSafeResumeBoundary(entry)) return index
-  }
-  return 0
-}
-
-function estimateEntryCharacters(entry: ConversationEntry): number {
-  // WHY source.raw is excluded: it duplicates the provider wire record and can
-  // be orders of magnitude larger than the semantic content the target model
-  // actually receives. The budget must approximate projected prompt payload,
-  // not parser provenance retained only for evidence and reporting.
-  if (entry.kind === 'message') return printableLength({ role: entry.role, content: entry.content })
-  if (entry.kind === 'reasoning') return entry.text.length
-  if (entry.kind === 'tool-call') return printableLength({ name: entry.name, input: entry.input })
-  if (entry.kind === 'tool-result') return printableLength(entry.output)
-  if (entry.kind === 'compaction') return entry.summary.length
-  return 0
-}
-
-function printableLength(value: unknown): number {
-  try {
-    return (JSON.stringify(value) ?? String(value)).length
-  } catch {
-    return String(value).length
   }
 }

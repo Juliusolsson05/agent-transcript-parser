@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "caseId": "claude-sequence-rate-limit",
+  "description": "Value-redacted observed sequence for sequence:rate-limit-error.",
+  "provider": "claude",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "claude",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-09-07T19:45:49.259Z",
+  "normalization": [
+    "Selected the smallest observed sequence satisfying the relationship.",
+    "Kept only relationship-bearing records in original order.",
+    "Pseudonymized scalar values while preserving identity equality across records."
+  ],
+  "redactions": [
+    "All private scalar content, paths, URLs, timestamps, models, and identifiers."
+  ],
+  "features": [
+    "sequence:rate-limit-error"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "d18a2451870d4896e62ff00d257d95146c4516bab3411cc2df501d39110a102c",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "caseId": "codex-sequence-compacted-history",
+  "description": "Value-redacted observed sequence for sequence:compacted-rollout-with-history.",
+  "provider": "codex",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "codex",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-09-07T20:15:08.780Z",
+  "normalization": [
+    "Selected the smallest observed sequence satisfying the relationship.",
+    "Kept only relationship-bearing records in original order.",
+    "Pseudonymized scalar values while preserving identity equality across records."
+  ],
+  "redactions": [
+    "All private scalar content, paths, URLs, timestamps, models, and identifiers."
+  ],
+  "features": [
+    "sequence:compacted-rollout-with-history"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "6b5bc10e587412a7a162d6112948df419de20c5a391447d4487c7bbff9b0da51",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}
