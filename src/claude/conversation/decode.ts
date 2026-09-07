@@ -54,6 +54,16 @@ export function decodeClaudeConversation(
       continue
     }
     if (record.family === 'user-message' || record.family === 'assistant-message') {
+      if (record.family === 'assistant-message' && record.raw.isApiErrorMessage === true) {
+        // WHY an API error is opaque rather than an assistant message: Claude
+        // persists "You've hit your session limit…" as an assistant-shaped
+        // record so the TUI can render it. It is not model output. Projecting
+        // it would carry a provider's billing message into another provider's
+        // history as if the model had said it, and a rate-limit text would
+        // become indistinguishable from a summary (#820).
+        entries.push({ kind: 'opaque', nativeType: 'api_error', timestamp, source })
+        continue
+      }
       const role = record.family === 'user-message' ? 'user' as const : 'assistant' as const
       let messageContent: ConversationContent[] = []
       const flushMessageContent = (): void => {
