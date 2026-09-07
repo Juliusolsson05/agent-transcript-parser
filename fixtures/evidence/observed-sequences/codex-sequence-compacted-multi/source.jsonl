@@ -1,0 +1,154 @@
+{"payload":{"agent_nickname":"FixtureName","base_instructions":{"text":"fixture text"},"cli_version":"0.0.0-fixture","cwd":"/fixture/project","forked_from_id":"fixture-id-1","git":{"branch":"fixture-branch","commit_hash":"<redacted-data>","repository_url":"https://example.invalid/fixture"},"id":"fixture-id-2","model_provider":"fixture-model","originator":"fixture text","source":{"subagent":{"thread_spawn":{"agent_nickname":"FixtureName","agent_path":null,"agent_role":null,"depth":1,"parent_thread_id":"fixture-id-1"}}},"thread_source":"fixture text","timestamp":"2026-01-01T00:00:00.000Z"},"timestamp":"2026-01-01T00:00:00.000Z","type":"session_meta"}
+{"payload":{"base_instructions":null,"cli_version":"0.0.0-fixture","cwd":"/fixture/project","git":{"branch":"fixture-branch"},"id":"fixture-id-1","model_provider":"fixture-model","originator":"fixture text","source":"fixture text","timestamp":"2026-01-01T00:00:00.000Z"},"timestamp":"2026-01-01T00:00:00.000Z","type":"session_meta"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"developer","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"message":"fixture text"},"timestamp":"2026-01-01T00:00:00.000Z","type":"compacted"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"message":"fixture text"},"timestamp":"2026-01-01T00:00:00.000Z","type":"compacted"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"developer","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"developer","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"message":"fixture text","replacement_history":[{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},{"encrypted_content":"<redacted-data>","type":"fixture text"}]},"timestamp":"2026-01-01T00:00:00.000Z","type":"compacted"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"message":"fixture text","replacement_history":[{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},{"encrypted_content":"<redacted-data>","type":"fixture text"}]},"timestamp":"2026-01-01T00:00:00.000Z","type":"compacted"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"developer","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"approval_policy":"fixture text","collaboration_mode":{"mode":"fixture text","settings":{"developer_instructions":null,"model":"fixture-model","reasoning_effort":"fixture text"}},"current_date":"fixture text","cwd":"/fixture/project","effort":"fixture text","model":"fixture-model","permission_profile":{"type":"fixture text"},"personality":"fixture text","realtime_active":false,"sandbox_policy":{"type":"fixture text"},"summary":"fixture text","timezone":"fixture text","truncation_policy":{"limit":1,"mode":"fixture text"},"turn_id":"fixture-id-3","user_instructions":"fixture text"},"timestamp":"2026-01-01T00:00:00.000Z","type":"turn_context"}
+{"payload":{"content":[{"text":"fixture text","type":"input_text"}],"role":"user","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-4","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-5","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-6","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-4","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-5","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-6","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-7","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-8","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-9","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-7","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-8","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-9","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-10","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-11","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-12","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-10","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-11","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-12","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-13","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-13","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-14","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-15","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-16","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-14","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-15","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-16","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-17","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-18","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-19","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-17","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-18","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-19","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-20","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-21","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-22","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-20","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-21","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-22","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-23","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-23","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-24","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-24","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"arguments":"fixture text","call_id":"fixture-id-25","name":"FixtureName","type":"function_call"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"call_id":"fixture-id-25","output":"fixture text","type":"function_call_output"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":null,"encrypted_content":"<redacted-data>","summary":[],"type":"reasoning"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}
+{"payload":{"content":[{"text":"fixture text","type":"output_text"}],"phase":"fixture text","role":"assistant","type":"message"},"timestamp":"2026-01-01T00:00:00.000Z","type":"response_item"}

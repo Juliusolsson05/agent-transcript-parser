@@ -7,6 +7,14 @@ import { describe, expect, it } from 'vitest'
 
 const fixtureRoot = new URL('../../fixtures/evidence/', import.meta.url)
 const observedRoot = new URL('../../fixtures/evidence/observed/', import.meta.url)
+const observedSequenceRoot = new URL('../../fixtures/evidence/observed-sequences/', import.meta.url)
+
+async function caseDirectories(root: URL): Promise<string[]> {
+  return (await readdir(root, { withFileTypes: true }))
+    .filter(entry => entry.isDirectory())
+    .map(entry => entry.name)
+    .sort((a, b) => a.localeCompare(b))
+}
 
 describe('observed fixture corpus', () => {
   it('keeps every observed record adjacent to valid, bounded provenance', async () => {
@@ -41,9 +49,44 @@ describe('observed fixture corpus', () => {
     }
   })
 
+  // WHY this exists separately from the single-record check above: sequence
+  // fixtures are the only committed evidence whose value is the *shape of a
+  // whole session* (pre/post compaction proportions, a rate-limit record in
+  // its neighbourhood, an oversized history). They are therefore multi-line,
+  // which the single-record assertion forbids, and until this test they were
+  // committed to a package repository with no schema or redaction gate at all.
+  it('keeps every observed sequence adjacent to valid, bounded provenance', async () => {
+    const schema = JSON.parse(
+      await readFile(new URL('manifest.schema.json', fixtureRoot), 'utf8'),
+    ) as object
+    const ajv = new Ajv2020({ allErrors: true, strict: true })
+    addFormats(ajv)
+    const validate = ajv.compile(schema)
+    const names = await caseDirectories(observedSequenceRoot)
+
+    // A ratchet, not a vanity count: see the note on the observed corpus above.
+    expect(names.length).toBeGreaterThanOrEqual(11)
+
+    for (const name of names) {
+      const directory = new URL(`${name}/`, observedSequenceRoot)
+      const manifest = JSON.parse(await readFile(new URL('manifest.json', directory), 'utf8'))
+      const source = await readFile(new URL('source.jsonl', directory), 'utf8')
+      const lines = source.trimEnd().split('\n')
+
+      expect(validate(manifest), `${name}: ${ajv.errorsText(validate.errors)}`).toBe(true)
+      expect(manifest.caseId).toBe(name)
+      expect(manifest.provenance).toBe('observed-wire')
+      expect(manifest.proves).toEqual(['wire-shape', 'classification'])
+      expect(lines.length).toBeGreaterThanOrEqual(1)
+      for (const line of lines) expect(() => JSON.parse(line)).not.toThrow()
+    }
+  })
+
   it('contains no known private scalar or path patterns', async () => {
-    const entries = (await readdir(observedRoot, { withFileTypes: true }))
-      .filter(entry => entry.isDirectory())
+    const entries = [
+      ...(await caseDirectories(observedRoot)).map(name => ({ root: observedRoot, name })),
+      ...(await caseDirectories(observedSequenceRoot)).map(name => ({ root: observedSequenceRoot, name })),
+    ]
     const forbidden = [
       /\/Users\//,
       /juliusolsson/i,
@@ -56,7 +99,7 @@ describe('observed fixture corpus', () => {
 
     for (const entry of entries) {
       const source = await readFile(
-        new URL(`${entry.name}/source.jsonl`, observedRoot),
+        new URL(`${entry.name}/source.jsonl`, entry.root),
         'utf8',
       )
       for (const pattern of forbidden) {
