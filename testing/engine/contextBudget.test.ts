@@ -13,6 +13,9 @@ import {
 } from '../../src/operations/compaction.js'
 import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
 import { resolveCodexTargetProfileFromSources } from '../../src/codex/profile/targetProfile.js'
+import { estimateConversationCharacters } from '../../src/operations/estimate.js'
+import { ConversationUnfittableError } from '../../src/operations/shrink.js'
+import { claude, codex } from './fixtureConversations.js'
 
 describe('context budget fitting', () => {
   it('keeps the largest recent suffix beginning at a complete user boundary', () => {
@@ -285,6 +288,123 @@ model_provider = "custom"
       contextTokens: 200_000,
       budgetCharacters: 405_000,
     })
+  })
+})
+
+// The quota-independent planner: `allowSourceTurns: false` is what a host
+// passes when the source subscription is exhausted, so none of the outcomes
+// below may instruct it to run a live turn on the source.
+// See docs/superpowers/specs/2026-09-05-quota-independent-provider-switch-design.md
+// §"Planner outcomes".
+describe('planConversationContext without source turns', () => {
+  const claudeMillionBudget = budgetCharactersForContextTokens(1_000_000)
+
+  it('returns raw-history for the minority Codex shape that begins at its compaction', async () => {
+    // `codex-sequence-compacted-once` puts its single encrypted compaction at
+    // entry 2 with nothing before it — 19 of 230 local rollouts (8.3 %), per
+    // census finding 6. The absolute 1M-Claude budget is safe to use here
+    // precisely because the fixture fits it by four orders of magnitude; no
+    // proportion is being asserted.
+    const conversation = await codex('codex-sequence-compacted-once')
+
+    const plan = planConversationContext(conversation, 'claude', claudeMillionBudget, {
+      allowSourceTurns: false,
+    })
+
+    expect(plan.kind).toBe('raw-history')
+    if (plan.kind !== 'raw-history') return
+    expect(plan.strippedCompactions).toBe(1)
+    expect(plan.conversation.entries.some(entry => entry.kind === 'compaction')).toBe(false)
+    expect(plan.estimatedCharacters).toBeLessThanOrEqual(claudeMillionBudget)
+    expect(plan.budgetCharacters).toBe(claudeMillionBudget)
+  })
+
+  it('returns raw-history that keeps the pre-compaction history of the majority Codex shape', async () => {
+    // The other 91.7 %: a compaction at entry 23 of 83 with 23 entries of
+    // plaintext history ahead of it. Those entries are the whole point — the
+    // old `requires-portable-handoff` outcome would have spent a source turn
+    // to re-summarize history that is already readable on disk.
+    const conversation = await codex('codex-sequence-compacted-history')
+    const before = conversation.entries.slice(0, 23)
+
+    const plan = planConversationContext(conversation, 'claude', claudeMillionBudget, {
+      allowSourceTurns: false,
+    })
+
+    expect(plan.kind).toBe('raw-history')
+    if (plan.kind !== 'raw-history') return
+    expect(plan.strippedCompactions).toBe(1)
+    expect(plan.conversation.entries.slice(0, 23)).toEqual(before)
+    expect(plan.conversation.entries).toHaveLength(conversation.entries.length - 1)
+  })
+
+  it('returns shrunk with a report for an oversized Claude session targeting Codex', async () => {
+    const conversation = await claude('claude-sequence-oversized-turns')
+    // A tenth of the fixture's own estimate: redaction leaves it far under any
+    // absolute Codex budget, so the proportion is what has to be relative.
+    const budget = Math.floor(estimateConversationCharacters(conversation) * 0.1)
+
+    const plan = planConversationContext(conversation, 'codex', budget, { allowSourceTurns: false })
+
+    expect(plan.kind).toBe('shrunk')
+    if (plan.kind !== 'shrunk') return
+    expect(plan.estimatedCharacters).toBeLessThanOrEqual(budget)
+    expect(plan.budgetCharacters).toBe(budget)
+    expect(plan.report.budgetCharacters).toBe(budget)
+    expect(plan.report.droppedTurns).toBeGreaterThan(0)
+    // The planner slices at the latest portable compaction BEFORE stripping, so
+    // the ladder only ever sees the tail after this fixture's real Claude
+    // carrier (entry 1023 of 1470). That carrier is portable, so rung 1 leaves
+    // it alone; the drop rung then cuts past it and folds its summary into the
+    // synthetic marker, which is why entry 0 below is `synthetic` and not the
+    // carrier itself.
+    expect(plan.report.strippedCompactions).toBe(0)
+    const first = plan.conversation.entries[0]!
+    expect(first.kind).toBe('compaction')
+    expect(first.kind === 'compaction' ? first.summarySource : null).toBe('synthetic')
+  })
+
+  it('returns existing-compaction when the tail after a portable carrier already fits', async () => {
+    const conversation = await claude('claude-sequence-oversized-turns')
+
+    const plan = planConversationContext(conversation, 'codex', claudeMillionBudget, {
+      allowSourceTurns: false,
+    })
+
+    expect(plan.kind).toBe('existing-compaction')
+    if (plan.kind !== 'existing-compaction') return
+    expect(plan.conversation.entries[0]?.kind).toBe('compaction')
+    expect(plan.conversation.entries.length).toBeLessThan(conversation.entries.length)
+  })
+
+  it('returns ready when a conversation with no compaction already fits', async () => {
+    const conversation = await claude('claude-sequence-oversized')
+
+    const plan = planConversationContext(conversation, 'codex', claudeMillionBudget, {
+      allowSourceTurns: false,
+    })
+
+    expect(plan.kind).toBe('ready')
+    expect(plan.conversation).toBe(conversation)
+  })
+
+  it('propagates ConversationUnfittableError rather than inventing a fifth outcome', async () => {
+    const conversation = await claude('claude-sequence-oversized')
+
+    expect(() => planConversationContext(conversation, 'codex', 200, { allowSourceTurns: false }))
+      .toThrow(ConversationUnfittableError)
+  })
+
+  it('keeps the existing outcomes when source turns are allowed', async () => {
+    const conversation = await codex('codex-sequence-compacted-once')
+
+    expect(planConversationContext(conversation, 'claude', claudeMillionBudget).kind)
+      .toBe('requires-portable-handoff')
+    // ...and the default is unchanged when an options object is supplied
+    // without the flag, so no existing caller changes behaviour by passing
+    // shrink options alone.
+    expect(planConversationContext(conversation, 'claude', claudeMillionBudget, {}).kind)
+      .toBe('requires-portable-handoff')
   })
 })
 

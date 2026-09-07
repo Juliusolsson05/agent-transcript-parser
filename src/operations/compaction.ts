@@ -218,7 +218,12 @@ export function portableOpencodeHandoffAfterLine(
   return null
 }
 
-function compactionAvailability(entry: ConversationCompaction): CompactionAvailability {
+// WHY this is exported: the shrink ladder (operations/shrink.ts) decides which
+// compaction entries a foreign target can read, and it must ask the same
+// question `describeLatestCompaction` and
+// `conversationAfterLatestPortableCompaction` ask. A second copy of the rule in
+// the ladder would drift the moment a fifth availability value appeared.
+export function compactionAvailability(entry: ConversationCompaction): CompactionAvailability {
   if (entry.summarySource === 'encrypted') return 'native-only'
 
   // WHY this is checked before the placeholder rule and before the non-empty
