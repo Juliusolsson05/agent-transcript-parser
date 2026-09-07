@@ -12,10 +12,11 @@ export type CompactionAvailability = 'portable' | 'native-only' | 'incomplete' |
 
 // WHY these prefixes are a parser constant: Claude Code writes its rate-limit
 // message as an ordinary assistant record whose text starts with one of these
-// (services/rateLimitMessages.ts RATE_LIMIT_ERROR_PREFIXES). Its own
-// compaction only rejects summaries starting with "API Error", so a limit hit
-// during /compact can plausibly persist this text as the summary. Any host
-// that accepted such a carrier would switch with the history destroyed (#820).
+// (services/rateLimitMessages.ts RATE_LIMIT_ERROR_PREFIXES, byte-identical to
+// this list). Its own compaction only rejects summaries starting with
+// "API Error", so a limit hit during /compact can plausibly persist this text
+// as the summary. Any host that accepted such a carrier would switch with the
+// history destroyed (#820).
 export const CLAUDE_RATE_LIMIT_PREFIXES = [
   "You've hit your",
   "You've used",
@@ -24,9 +25,40 @@ export const CLAUDE_RATE_LIMIT_PREFIXES = [
   "You're out of extra usage",
 ] as const
 
+/**
+ * Decide whether a persisted compaction carrier is really a rate-limit message.
+ *
+ * WHY this matches at any line start instead of only at position 0, which is
+ * what Claude Code's own `isRateLimitErrorMessage` does: the two functions do
+ * not see the same string. Claude's guard runs on the raw model summary, before
+ * `getCompactUserSummaryMessage` (vendor/claude-code-src/full/services/compact/
+ * prompt.ts:337-346) unconditionally wraps it in
+ *
+ *   "This session is being continued from a previous conversation that ran out
+ *    of context. The summary below covers the earlier portion of the
+ *    conversation.\n\n<formatted summary>"
+ *
+ * and all three carrier-writing sites go through that wrapper (compact.ts:616,
+ * compact.ts:1033, sessionMemoryCompact.ts:464). The parser only ever sees the
+ * wrapped, persisted record, so the limit text lands roughly 150 characters in,
+ * behind that preamble and usually behind a "Summary:" header line as well.
+ * A `startsWith` check on the carrier would therefore never fire on the exact
+ * artifact this guard exists to catch. The Stage 0 census independently
+ * confirms the shape: the one real post-limit carrier in the corpus begins
+ * "This session is being continued from a previous conversation that ran out
+ * of context."
+ *
+ * The cost of the wider match is a false `rejected` on a genuine summary that
+ * happens to open a line with "You've used" — that costs one raw-history carry.
+ * The cost of missing one is a switch that destroys the conversation, so the
+ * asymmetry is deliberate.
+ */
 export function isRateLimitText(text: string): boolean {
-  const trimmed = text.trimStart()
-  return CLAUDE_RATE_LIMIT_PREFIXES.some(prefix => trimmed.startsWith(prefix))
+  for (const line of text.split('\n')) {
+    const trimmed = line.trimStart()
+    if (CLAUDE_RATE_LIMIT_PREFIXES.some(prefix => trimmed.startsWith(prefix))) return true
+  }
+  return false
 }
 
 /**
@@ -196,7 +228,13 @@ function compactionAvailability(entry: ConversationCompaction): CompactionAvaila
   // things to a host: `incomplete` says "the provider's summary is not fully
   // materialised here, look at the native side", while `rejected` says "this
   // carrier is not a summary at all, never project it" (#820).
-  if (isRateLimitText(entry.summary)) return 'rejected'
+  //
+  // WHY it is gated on the Claude provider: CLAUDE_RATE_LIMIT_PREFIXES is
+  // Claude Code's own list, and the line-start match is wide enough that an
+  // unrelated Codex or OpenCode plaintext summary opening a line with "You've
+  // used" would otherwise be thrown away for words no other provider ever
+  // writes as a limit notice.
+  if (entry.source.provider === 'claude' && isRateLimitText(entry.summary)) return 'rejected'
 
   if (
     entry.summarySource === 'boundary' &&
