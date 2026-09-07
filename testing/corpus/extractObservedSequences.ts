@@ -302,6 +302,28 @@ const wholeRolloutRelationships: readonly WholeRolloutRelationship[] = [
     keep: r => r.type === 'session_meta' || r.type === 'response_item' || r.type === 'compacted' || r.type === 'turn_context',
   },
   {
+    caseId: 'codex-sequence-compacted-history',
+    provider: 'codex',
+    feature: 'sequence:compacted-rollout-with-history',
+    // The census measured all 230 single-compacted rollouts: 211 of them
+    // (91.7 percent) put the compaction somewhere other than entry index 2 and
+    // keep a median 74.3 percent of their characters *before* it. The
+    // smallest-candidate rule nevertheless selected the 8 percent shape for
+    // `codex-sequence-compacted-once` — a forked thread that begins from a
+    // compaction and therefore has no plaintext history to carry. This
+    // relationship demands the majority shape explicitly, so the shrink ladder
+    // and the cross-provider carry-over are exercised against a rollout that
+    // actually has pre-compaction records to move.
+    select: file => {
+      if (countRecords(file, r => r.type === 'compacted') !== 1) return false
+      const index = file.findIndex(r => r.type === 'compacted')
+      const total = estimateSemanticCharacters(file)
+      if (total === 0) return false
+      return estimateSemanticCharacters(file.slice(0, index)) / total >= 0.5
+    },
+    keep: r => r.type === 'session_meta' || r.type === 'response_item' || r.type === 'compacted' || r.type === 'turn_context',
+  },
+  {
     caseId: 'codex-sequence-compacted-multi',
     provider: 'codex',
     feature: 'sequence:repeatedly-compacted-rollout',
@@ -332,6 +354,23 @@ const wholeRolloutRelationships: readonly WholeRolloutRelationship[] = [
     // 95 percent, 2.5 characters per token). A transcript above it is one the
     // shrink ladder must actually handle rather than pass through.
     select: file => estimateSemanticCharacters(file) > 581_400,
+    keep: r => r.type === 'user' || r.type === 'assistant' || r.type === 'system',
+  },
+  {
+    caseId: 'claude-sequence-oversized-turns',
+    provider: 'claude',
+    feature: 'sequence:oversized-history-beyond-tool-results',
+    // The census measured all 91 local transcripts over the Codex budget:
+    // clearing *every* tool-result output still leaves 46 of them (50.5
+    // percent) above the budget, at a median of 1.04x and up to 12.41x. So
+    // dropping oldest turns is a rung the ladder reaches about half the time,
+    // not a theoretical last resort. `claude-sequence-oversized` is 1.11x the
+    // budget and is fixed by clearing alone, so it cannot exercise that rung at
+    // all. This relationship selects a transcript that is still over budget
+    // once every tool result is worth nothing.
+    select: file =>
+      estimateSemanticCharacters(file) > 581_400 &&
+      estimateSemanticCharacters(file, { includeToolResults: false }) > 581_400,
     keep: r => r.type === 'user' || r.type === 'assistant' || r.type === 'system',
   },
 ]
@@ -369,21 +408,32 @@ function countRecords(
  * silent zero. Only text actually sent to a model counts — prompt and reply
  * text, tool arguments, tool output — because that is what the shrink ladder
  * has to fit into a budget.
+ *
+ * `includeToolResults: false` answers a different question: what would this
+ * conversation still cost if the ladder cleared every tool result? That is the
+ * one measurement that decides whether the drop-oldest-turns rung has to fire,
+ * so it belongs here next to the total rather than in a caller's re-walk.
  */
-function estimateSemanticCharacters(file: readonly SequenceRecord[]): number {
+function estimateSemanticCharacters(
+  file: readonly SequenceRecord[],
+  options: { includeToolResults?: boolean } = {},
+): number {
+  const includeToolResults = options.includeToolResults ?? true
   let total = 0
   for (const record of file) {
     for (const container of [record.message, record.payload]) {
       if (!isRecord(container)) continue
-      total += semanticCharactersOfContent(container.content)
-      if (typeof container.output === 'string') total += container.output.length
+      total += semanticCharactersOfContent(container.content, includeToolResults)
+      // A Codex `*_call_output` payload keeps its text here rather than in a
+      // content block, so it is tool-result content by any other name.
+      if (includeToolResults && typeof container.output === 'string') total += container.output.length
       if (typeof container.arguments === 'string') total += container.arguments.length
     }
   }
   return total
 }
 
-function semanticCharactersOfContent(content: unknown): number {
+function semanticCharactersOfContent(content: unknown, includeToolResults: boolean): number {
   if (typeof content === 'string') return content.length
   if (!Array.isArray(content)) return 0
   let total = 0
@@ -391,6 +441,7 @@ function semanticCharactersOfContent(content: unknown): number {
     if (!isRecord(block)) continue
     if (typeof block.text === 'string') total += block.text.length
     if (block.type !== 'tool_result' && block.type !== 'function_call_output') continue
+    if (!includeToolResults) continue
     const output = block.content ?? block.output
     if (typeof output === 'string') total += output.length
     else if (Array.isArray(output)) {

@@ -1,0 +1,42 @@
+{
+  "schemaVersion": 1,
+  "caseId": "claude-sequence-oversized-turns",
+  "description": "Value-redacted observed sequence for sequence:oversized-history-beyond-tool-results.",
+  "provider": "claude",
+  "format": "jsonl",
+  "provenance": "observed-wire",
+  "profile": {
+    "provider": "claude",
+    "platform": "darwin"
+  },
+  "reviewedAt": "2026-09-07T20:15:08.780Z",
+  "normalization": [
+    "Selected the smallest observed sequence satisfying the relationship.",
+    "Kept only relationship-bearing records in original order.",
+    "Pseudonymized scalar values while preserving identity equality across records."
+  ],
+  "redactions": [
+    "All private scalar content, paths, URLs, timestamps, models, and identifiers."
+  ],
+  "features": [
+    "sequence:oversized-history-beyond-tool-results"
+  ],
+  "proves": [
+    "wire-shape",
+    "classification"
+  ],
+  "doesNotProve": [
+    "archive-fidelity",
+    "native-discovery",
+    "native-load",
+    "native-reconstruction",
+    "native-append",
+    "semantic-translation",
+    "agent-code-consumer"
+  ],
+  "source": {
+    "kind": "local-observation",
+    "sha256": "f2ea5c2a5e95506236b9b6e03cda270a9ef55c7404e862b0fdccb7c810e9dfe1",
+    "reference": "local-corpus-census-2026-07-20"
+  }
+}
