@@ -421,6 +421,11 @@ function codexImage(content: ConversationContent): Record<string, unknown> | nul
     return { type: 'input_image', image_url: content.value.image_url }
   }
   const source = isRecord(content.value.source) ? content.value.source : null
+  // URL-backed neutral images are also emitted by the Grok decoder; they
+  // must not disappear merely because they are not inline base64 data.
+  if (source?.type === 'url' && typeof source.url === 'string') {
+    return { type: 'input_image', image_url: source.url }
+  }
   if (
     source?.type === 'base64' &&
     typeof source.media_type === 'string' &&
