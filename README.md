@@ -124,6 +124,29 @@ The package never opens OpenCode's private SQLite database or executes its CLI.
 The host owns export/import execution and temporary-file security; the parser
 owns pure decoding, deterministic native identities, and fidelity reporting.
 
+## Grok Build history
+
+`decodeGrokConversation` reads parsed `chat_history.jsonl` values into the same
+neutral document. `grokConversationDecoder`, `grokArchiveProjector` and
+`grokNativeResumeProjector` expose the common adapter contracts; no pairwise
+Grok-to-Claude/Codex/OpenCode converter is required.
+
+`projectGrokNativeResume(conversation, { targetSessionId, now, cwd, model })`
+returns native history in `values` and a separate `summary` for `summary.json`.
+The host writes those into a new Grok session directory plus an empty
+`updates.jsonl`; the parser never creates directories or launches a CLI.
+Native loading supplies Grok's own system instructions when history has no
+system record. Foreign system/bootstrap records are not installed as policy.
+
+The Grok 1.0.13 profile has controlled native-load/reconstruction evidence:
+an isolated CLI read the projected file set, sent the imported user/tool/result
+history to a local fixture backend, and appended a new assistant record.
+This does not prove paid-server authentication of copied encrypted reasoning,
+native session-picker display, or the full Agent Code switching UI.
+Archives preserve opaque provenance; native projection reports unsupported
+data and unmatched/cross-boundary tool cycles. Grok's broad `compaction_meta`
+tag remains context, not a boundary that can discard preceding history.
+
 `fitConversationToCharacterBudget` remains an explicit lossy escape hatch. Its
 result includes `stillExceedsBudget`; callers must not assume that a complete
 turn boundary small enough to satisfy an arbitrary budget always exists.
