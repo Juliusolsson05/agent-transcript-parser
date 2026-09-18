@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
+import type { ConversationContent, ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
 import {
   ConversationUnfittableError,
+  clearAttachments,
   clearToolResults,
   dropOldestTurns,
   estimateConversationCharacters,
@@ -14,6 +15,12 @@ import {
   CENSUS_OVERSIZED_TURNS_PAYLOADS,
   claude,
   codex,
+  conversationOf,
+  image,
+  message,
+  pastedImageTailConversation,
+  toolCall,
+  toolResult,
   withCensusToolPayloads,
 } from './fixtureConversations.js'
 
@@ -160,6 +167,98 @@ describe('clearToolResults', () => {
     expect(result.conversation.entries[2]).toMatchObject({
       output: '[tool output cleared during provider switch: 4000 characters]',
     })
+  })
+})
+
+describe('clearAttachments', () => {
+  it('replaces the oldest attachment payloads first and never touches the last three user turns', () => {
+    const conversation = attachmentTurns(6, () => image(5_000))
+    const before = estimateConversationCharacters(conversation)
+    // Room for exactly two clearings: each image is ~5,050 serialized
+    // characters and its placeholder ~55, so one clearing saves just under
+    // 5,000 and two are needed to shed 9,000.
+    const budget = before - 9_000
+
+    const result = clearAttachments(conversation, budget)
+
+    expect(result.cleared).toBe(2)
+    expect(result.clearedChars).toBeGreaterThan(9_000)
+    expect(estimateConversationCharacters(result.conversation)).toBe(before - result.clearedChars)
+    expect(estimateConversationCharacters(result.conversation)).toBeLessThanOrEqual(budget)
+    // The placeholder takes the attachment's place, so the prompt text and its
+    // position relative to the attachment survive.
+    expect(result.conversation.entries[0]).toMatchObject({
+      kind: 'message',
+      role: 'user',
+      content: [
+        { kind: 'text', text: 'turn 0' },
+        { kind: 'text', text: '[image omitted during provider switch]' },
+      ],
+    })
+    expect(result.conversation.entries[2]).toMatchObject({
+      content: [{ kind: 'text', text: 'turn 1' }, { kind: 'text', text: '[image omitted during provider switch]' }],
+    })
+    // Turn 2 was reachable but not needed; turns 3-5 are protected. All four
+    // keep their original entry objects.
+    for (let index = 4; index < conversation.entries.length; index += 1) {
+      expect(result.conversation.entries[index]).toBe(conversation.entries[index])
+    }
+  })
+
+  it('honours the protection even when clearing everything reachable is not enough', () => {
+    const conversation = attachmentTurns(6, () => image(5_000))
+
+    const result = clearAttachments(conversation, 100)
+
+    // Three reachable images gone, three protected ones intact, still over.
+    expect(result.cleared).toBe(3)
+    const protectedFrom = indexesOfUserMessages(conversation.entries).at(-3)!
+    for (let index = protectedFrom; index < conversation.entries.length; index += 1) {
+      expect(result.conversation.entries[index]).toBe(conversation.entries[index])
+    }
+    expect(estimateConversationCharacters(result.conversation)).toBeGreaterThan(100)
+  })
+
+  it('treats documents and unknown non-text blocks as attachments and leaves text-only messages alone', () => {
+    const conversation = attachmentTurns(6, turn => {
+      if (turn === 0) return { kind: 'text', text: 'x'.repeat(3_000) }
+      if (turn === 1) {
+        return {
+          kind: 'document',
+          value: { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'P'.repeat(3_000) } },
+        }
+      }
+      return { kind: 'opaque', nativeType: 'file', value: { type: 'file', mime: 'image/png', url: `data:image/png;base64,${'F'.repeat(3_000)}` } }
+    })
+
+    const result = clearAttachments(conversation, 0)
+
+    // Turn 0's 3,000 characters of prose are the user's own words: not an
+    // attachment, not this rung's business, however over budget we are.
+    expect(result.conversation.entries[0]).toBe(conversation.entries[0])
+    expect(result.conversation.entries[2]).toMatchObject({
+      content: [{ kind: 'text', text: 'turn 1' }, { kind: 'text', text: '[document omitted during provider switch]' }],
+    })
+    expect(result.conversation.entries[4]).toMatchObject({
+      content: [{ kind: 'text', text: 'turn 2' }, { kind: 'text', text: '[attachment omitted during provider switch]' }],
+    })
+    expect(result.cleared).toBe(2)
+  })
+
+  it('never grows a message whose attachment is shorter than the placeholder', () => {
+    const conversation = attachmentTurns(6, () => ({ kind: 'opaque', nativeType: 'x', value: { type: 'x' } }))
+
+    const result = clearAttachments(conversation, 0)
+
+    expect(result).toMatchObject({ cleared: 0, clearedChars: 0 })
+    expect(result.conversation).toBe(conversation)
+  })
+
+  it('returns the conversation untouched when it already fits', () => {
+    const conversation = attachmentTurns(6, () => image(5_000))
+    const result = clearAttachments(conversation, estimateConversationCharacters(conversation))
+    expect(result.conversation).toBe(conversation)
+    expect(result.cleared).toBe(0)
   })
 })
 
@@ -381,6 +480,117 @@ describe('shrinkConversationToBudget', () => {
       .toThrow(/the smallest complete suffix the ladder can produce/)
   })
 
+  it('fits the recorded shape whose newest turn is a tiny prompt plus a pasted image (#28)', () => {
+    // See pastedImageTailConversation for the real transcript this mirrors.
+    // Before the attachment rung and the protection lift, this threw
+    // "the smallest complete suffix the ladder can produce is N characters"
+    // after dropping every earlier turn: the newest turn was 99.98 % one image
+    // and no rung read message content.
+    const conversation = pastedImageTailConversation()
+    const budget = 3_000
+    expect(estimateConversationCharacters(conversation)).toBeGreaterThan(budget * 15)
+
+    const { conversation: shrunk, report } = shrinkConversationToBudget(conversation, budget)
+
+    expect(estimateConversationCharacters(shrunk)).toBeLessThanOrEqual(budget)
+    expect(report.estimatedCharactersAfter).toBeLessThanOrEqual(budget)
+    // Both attachments went: the opaque OpenCode part two turns back and the
+    // pasted image in the newest turn. The latter sits inside the protected
+    // turns, which is why the lift is reported.
+    expect(report.clearedAttachments).toBe(2)
+    expect(report.clearedAttachmentChars).toBeGreaterThan(50_000)
+    expect(report.liftedRecentTurnProtection).toBe(true)
+    // Clearing alone is still not enough at this budget, so the drop rung fired
+    // too — the real transcript's proportion.
+    expect(report.droppedTurns).toBeGreaterThan(0)
+    // Never a fragment: the retained history opens on the marker and then a
+    // complete user turn.
+    expect(shrunk.entries[0]?.kind).toBe('compaction')
+    expect(shrunk.entries[1]).toMatchObject({ kind: 'message', role: 'user' })
+    // The newest user turn survives with its words and a placeholder where the
+    // image was, so the target knows the user showed something here.
+    const newestUser = [...shrunk.entries].reverse().find(entry => entry.kind === 'message' && entry.role === 'user')
+    expect(newestUser).toMatchObject({
+      content: [
+        { kind: 'text', text: 'This [Image #1]' },
+        { kind: 'text', text: '[image omitted during provider switch]' },
+      ],
+    })
+  })
+
+  it('reclaims tool output inside the newest turn instead of refusing the switch', () => {
+    // The same failure without any image: a final turn whose one tool output is
+    // itself larger than the budget. Protection kept rung 2 off it and the
+    // fallback "kept the last complete turn whole" — which is the turn that
+    // did not fit.
+    const entries = turnedConversation(3, 200).entries
+    const line = (): number => entries.length
+    entries.push(message('user', 'run it', line()))
+    entries.push(toolCall(line(), 'call-final', { command: 'cat big.log' }))
+    entries.push(toolResult(line(), 'call-final', 'log line '.repeat(2_500)))
+    entries.push(message('assistant', 'Looked at the log.', line()))
+    const conversation = conversationOf(entries)
+
+    const { conversation: shrunk, report } = shrinkConversationToBudget(conversation, 3_000)
+
+    expect(estimateConversationCharacters(shrunk)).toBeLessThanOrEqual(3_000)
+    expect(report.liftedRecentTurnProtection).toBe(true)
+    expect(report.clearedResults).toBeGreaterThanOrEqual(1)
+    const finalResult = [...shrunk.entries].reverse().find(entry => entry.kind === 'tool-result')
+    expect(finalResult).toMatchObject({
+      callId: 'call-final',
+      output: expect.stringContaining('[tool output cleared during provider switch:'),
+    })
+    expect(shrunk.entries.find(entry => entry.kind !== 'compaction')).toMatchObject({ kind: 'message', role: 'user' })
+  })
+
+  it('leaves the protected turns alone whenever dropping older turns is enough', () => {
+    // The lift is a last resort, not a shortcut: when the suffix of protected
+    // turns fits on its own, the ladder must still prefer losing old history
+    // over touching recent payload, exactly as before.
+    const conversation = turnedConversation(6, 2_000)
+    const userIndexes = indexesOfUserMessages(conversation.entries)
+    const protectedFrom = userIndexes.at(-3)!
+    const protectedCost = conversation.entries
+      .slice(protectedFrom)
+      .reduce((sum, entry) => sum + estimateConversationCharacters(conversationOf([entry])), 0)
+    const budget = protectedCost + 400
+
+    const { conversation: shrunk, report } = shrinkConversationToBudget(conversation, budget)
+
+    expect(report.liftedRecentTurnProtection).toBe(false)
+    // Rung 2 clears the three old outputs first, so fewer than three turns need
+    // to go; the exact count is the marker's arithmetic, not the contract here.
+    expect(report.droppedTurns).toBeGreaterThan(0)
+    expect(report.droppedTurns).toBeLessThanOrEqual(3)
+    const protectedEntries = conversation.entries.slice(protectedFrom)
+    expect(shrunk.entries.slice(-protectedEntries.length)).toEqual(protectedEntries)
+  })
+
+  it("still throws when the newest turn's own text exceeds the budget", () => {
+    // Nothing here is payload the ladder may remove: the user wrote it. The
+    // lift finds nothing to clear, the drop rung cannot fit the turn, and the
+    // honest answer is still the error — never a fragment of the prompt.
+    const entries = turnedConversation(2, 100).entries
+    entries.push(message('user', 'a very long prompt '.repeat(600), entries.length))
+    entries.push(message('assistant', 'ok', entries.length))
+    const conversation = conversationOf(entries)
+
+    let thrown: unknown
+    try {
+      shrinkConversationToBudget(conversation, 1_000)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(ConversationUnfittableError)
+    expect((thrown as Error).message).toContain('the smallest complete suffix the ladder can produce')
+    expect((thrown as ConversationUnfittableError).report).toMatchObject({
+      clearedAttachments: 0,
+      liftedRecentTurnProtection: false,
+    })
+  })
+
   it('returns the conversation untouched with an all-zero report when it already fits', async () => {
     const conversation = await claude('claude-sequence-oversized')
     const budget = estimateConversationCharacters(conversation)
@@ -438,6 +648,23 @@ function turnedConversation(turns: number, resultChars: number): ConversationDoc
     })
   }
   return { schemaVersion: 1, sourceProvider: 'fixture', sourceSessionIds: [], entries }
+}
+
+/**
+ * `turns` user/assistant pairs where each user message is `turn N` plus one
+ * extra content item chosen by `extra(turn)` — the shape the attachment rung
+ * acts on, with a controlled turn count so the protected boundary is exact.
+ */
+function attachmentTurns(
+  turns: number,
+  extra: (turn: number) => ConversationContent,
+): ConversationDocument {
+  const entries: ConversationEntry[] = []
+  for (let turn = 0; turn < turns; turn += 1) {
+    entries.push(message('user', [{ kind: 'text', text: `turn ${turn}` }, extra(turn)], entries.length))
+    entries.push(message('assistant', `reply ${turn}`, entries.length))
+  }
+  return conversationOf(entries)
 }
 
 function markerSummary(conversation: { entries: readonly ConversationEntry[] }): string {

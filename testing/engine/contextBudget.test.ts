@@ -15,7 +15,15 @@ import type { ConversationDocument, ConversationEntry } from '../../src/conversa
 import { resolveCodexTargetProfileFromSources } from '../../src/codex/profile/targetProfile.js'
 import { estimateConversationCharacters } from '../../src/operations/estimate.js'
 import { ConversationUnfittableError } from '../../src/operations/shrink.js'
-import { claude, codex } from './fixtureConversations.js'
+import {
+  claude,
+  codex,
+  message,
+  pastedImageTailConversation,
+  source,
+  toolCall,
+  toolResult,
+} from './fixtureConversations.js'
 
 describe('context budget fitting', () => {
   it('keeps the largest recent suffix beginning at a complete user boundary', () => {
@@ -439,6 +447,27 @@ describe('planConversationContext without source turns', () => {
     expect(forced.kind === 'shrunk' ? forced.report.retainedDeveloperMessages : -1).toBe(4)
   })
 
+  it('returns shrunk with the attachments cleared when the newest turn is a pasted image (#28)', () => {
+    // The recorded shape: two user turns dominated by attachment payload at the
+    // very end of the conversation, each larger than the whole budget. Before
+    // the attachment rung and the protection lift existed this threw
+    // ConversationUnfittableError after dropping every earlier turn — the
+    // planner's only failure mode, reached on a conversation that in fact has
+    // plenty of droppable history.
+    const plan = planConversationContext(pastedImageTailConversation(), 'opencode', 3_000, {
+      allowSourceTurns: false,
+    })
+
+    expect(plan.kind).toBe('shrunk')
+    if (plan.kind !== 'shrunk') return
+    expect(plan.estimatedCharacters).toBeLessThanOrEqual(3_000)
+    expect(plan.report).toMatchObject({
+      clearedAttachments: 2,
+      liftedRecentTurnProtection: true,
+    })
+    expect(plan.report.droppedTurns).toBeGreaterThan(0)
+  })
+
   it('keeps the existing outcomes when source turns are allowed', async () => {
     const conversation = await codex('codex-sequence-compacted-once')
 
@@ -451,50 +480,3 @@ describe('planConversationContext without source turns', () => {
       .toBe('requires-portable-handoff')
   })
 })
-
-function message(
-  role: 'user' | 'assistant',
-  text: string,
-  line: number,
-): ConversationEntry {
-  return {
-    kind: 'message',
-    role,
-    content: [{ kind: 'text', text }],
-    ...source(line),
-  }
-}
-
-function toolCall(line: number): ConversationEntry {
-  return {
-    kind: 'tool-call',
-    callId: 'call-1',
-    name: 'Read',
-    input: { path: '/tmp/file' },
-    nativeKind: 'fixture',
-    ...source(line),
-  }
-}
-
-function toolResult(line: number): ConversationEntry {
-  return {
-    kind: 'tool-result',
-    callId: 'call-1',
-    output: 'contents',
-    isError: false,
-    nativeKind: 'fixture',
-    ...source(line),
-  }
-}
-
-function source(line: number, raw: Record<string, unknown> = {}) {
-  return {
-    timestamp: '2026-07-21T00:00:00.000Z',
-    source: {
-      provider: 'fixture',
-      line,
-      raw,
-      evidence: [],
-    },
-  }
-}

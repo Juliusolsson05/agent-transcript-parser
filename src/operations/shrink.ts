@@ -1,5 +1,6 @@
 import type {
   ConversationCompaction,
+  ConversationContent,
   ConversationDocument,
   ConversationEntry,
   ConversationMessage,
@@ -26,6 +27,15 @@ import {
 // that is 5 % over budget loses a few old tool outputs, not a third of its
 // history. Each rung reports what it did, because principle 3 of the design is
 // that no lossy step is silent.
+//
+// The rungs run in two passes. The first honours the recent-turn protection:
+// the clearing rungs (2–4) leave the newest `keepRecentTurns` user turns alone
+// and the drop rung (5) removes whole old turns. Only when the drop rung cannot
+// fit ANY complete turn — the protected suffix alone is over budget — does the
+// second pass re-run the clearing rungs with the protection lifted and drop
+// again. The protection is a preference for keeping "what I was just doing"
+// intact; it was never meant to be the reason a switch is refused. See
+// `shrinkConversationToBudget` for the recorded case that forced this.
 
 export interface ShrinkOptions {
   keepRecentTurns?: number
@@ -33,8 +43,8 @@ export interface ShrinkOptions {
   maxIndexedPrompts?: number
   promptIndexChars?: number
   /**
-   * Whether rung 4 lifts developer-role messages out of the dropped range and
-   * keeps them after the marker. Defaults to `true`.
+   * Whether the drop rung (rung 5) lifts developer-role messages out of the
+   * dropped range and keeps them after the marker. Defaults to `true`.
    *
    * WHY this is an option and not a constant, and WHY the default is `true`:
    * the census case for retention (finding 4) is about what a *source* thread
@@ -62,6 +72,15 @@ export interface ShrinkReport {
   trimmedInputs: number
   /** NET characters saved; see `clearedChars`. */
   trimmedChars: number
+  /**
+   * Attachment content items — `image`, `document` and `opaque` blocks inside
+   * messages — replaced with a text placeholder by rung 3. Counted per item,
+   * not per message: a prompt with two screenshots that both went reports 2,
+   * because that is what the user lost.
+   */
+  clearedAttachments: number
+  /** NET characters saved; see `clearedChars`. */
+  clearedAttachmentChars: number
   droppedEntries: number
   /**
    * Every dropped user message, including ones that carried no text (an image
@@ -70,13 +89,21 @@ export interface ShrinkReport {
    */
   droppedTurns: number
   /**
-   * Developer-role messages rung 4 lifted out of the dropped range and kept.
+   * Developer-role messages the drop rung lifted out of the dropped range and kept.
    * Zero when `keepDeveloperMessages` was false — in which case they were
    * dropped with their turns and are counted in `droppedEntries`.
    */
   retainedDeveloperMessages: number
   /** Characters the marker's prompt index occupies, after budget trimming. */
   promptIndexLength: number
+  /**
+   * True when the clearing rungs had to run a second time WITHOUT the
+   * recent-turn protection, because the protected suffix alone exceeded the
+   * budget. The counters above already include what that second pass removed;
+   * this flag exists so a host can tell the user that the newest turns were
+   * trimmed too, which the protection otherwise promises never happens.
+   */
+  liftedRecentTurnProtection: boolean
   estimatedCharactersBefore: number
   estimatedCharactersAfter: number
   budgetCharacters: number
@@ -226,6 +253,15 @@ export function clearToolResults(
   for (let index = 0; index < limit && total > budgetCharacters; index += 1) {
     const entry = entries[index]!
     if (entry.kind !== 'tool-result') continue
+    // WHY an already-cleared output is skipped rather than re-measured: the
+    // ladder's second pass runs this rung again over entries the first pass
+    // already cleared. The placeholder is itself a string whose length differs
+    // from the number it quotes by a character or two, so re-clearing it would
+    // "save" two characters, count the same result twice and flip
+    // `liftedRecentTurnProtection` on a conversation where nothing real was
+    // removed. The report must describe what the user lost, not the rung's own
+    // arithmetic, so a placeholder is terminal.
+    if (isClearedPlaceholder(entry.output)) continue
     const before = estimateEntryCharacters(entry)
     // The number quoted to the model is the RAW payload length it lost, not the
     // serialized budget estimate: a reader of "cleared: 4002 characters" is
@@ -254,10 +290,95 @@ export function clearToolResults(
 }
 
 /**
- * Rung 3. Truncate tool-call inputs above `maxInputChars`, oldest first.
+ * Rung 3. Replace attachment payloads inside messages with a placeholder,
+ * oldest first.
  *
- * Only reached when clearing every reachable result was not enough, which the
- * census says happens for about half of real over-budget transcripts.
+ * WHY message content is a rung at all, when the census measured tool results
+ * as where the bytes are: the census measured what the ladder could see, and
+ * the ladder could not see this. A real Claude transcript recorded on
+ * 2026-09-18 ended with a 15-character prompt carrying a 549,526-character
+ * base64 screenshot, two turns after a 129-character prompt carrying a
+ * 713,997-character `opaque` block (an OpenCode `file` part that an earlier
+ * switch had copied into the Claude file). Against a 288,000-character budget
+ * the ladder cleared 256 outputs, trimmed 3 inputs, dropped 15 turns and then
+ * threw, because the newest turn was 99.98 % one image and rungs 2 and 4 only
+ * ever look at tool entries. Nothing about that transcript was exotic: pasting
+ * a screenshot is how a user shows an agent a UI bug.
+ *
+ * WHY `image`, `document` AND `opaque` items, rather than images alone: all
+ * three are non-text payload the model has already consumed and answered. The
+ * distinction that matters to the ladder is authored words versus consumed
+ * input — the same line rung 2 draws between a tool's output and the model's
+ * reply. An `opaque` item in a message is, in addition, content every
+ * cross-provider projector drops on arrival, so leaving it in place charges the
+ * budget for bytes the target never sees. Text items are never touched: they
+ * are the user's or the model's own words, and a ladder that shortened a prompt
+ * would be rewriting what was asked.
+ *
+ * WHY the placeholder is `[<image|document|attachment> omitted during provider
+ * switch]` with no size, unlike rung 2's: a tool output's character count tells
+ * the model roughly how much text vanished; a base64 payload's count tells it
+ * nothing. The numbers live in the report, which is for the host and the user.
+ *
+ * WHY it sits between clearing results and trimming inputs: rung ordering is
+ * "what the loss costs the target model, cheapest first". A stale screenshot is
+ * consumed input like a stale tool output, and the assistant's reply to it
+ * normally describes what it saw. Tool-call inputs (rung 4) hold the edits the
+ * session made, which the target can read back nowhere else once the files have
+ * moved on. Dropping whole turns (rung 5) is strictly worse than any of these.
+ *
+ * Items are replaced one at a time, re-measuring the whole message after each,
+ * because the budget estimate is the serialized message and JSON escaping makes
+ * savings non-additive. The same net-savings guard as rung 2 applies: an item
+ * shorter than its placeholder is left alone so the report can never claim a
+ * saving while the conversation grew.
+ */
+export function clearAttachments(
+  conversation: ConversationDocument,
+  budgetCharacters: number,
+  options: ShrinkOptions = {},
+): { conversation: ConversationDocument; cleared: number; clearedChars: number } {
+  const keepRecentTurns = options.keepRecentTurns ?? DEFAULTS.keepRecentTurns
+  const limit = protectedFromIndex(conversation.entries, keepRecentTurns)
+  let total = estimateConversationCharacters(conversation)
+  if (total <= budgetCharacters) return { conversation, cleared: 0, clearedChars: 0 }
+
+  const entries = [...conversation.entries]
+  let cleared = 0
+  let clearedChars = 0
+  for (let index = 0; index < limit && total > budgetCharacters; index += 1) {
+    const entry = entries[index]!
+    if (entry.kind !== 'message' || !entry.content.some(isAttachment)) continue
+    let current: ConversationMessage = entry
+    for (let position = 0; position < current.content.length && total > budgetCharacters; position += 1) {
+      const item = current.content[position]!
+      if (!isAttachment(item)) continue
+      const before = estimateEntryCharacters(current)
+      const content = [...current.content]
+      content[position] = { kind: 'text', text: attachmentPlaceholder(item) }
+      const replaced: ConversationMessage = { ...current, content }
+      const after = estimateEntryCharacters(replaced)
+      if (after >= before) continue
+      current = replaced
+      total -= before - after
+      cleared += 1
+      clearedChars += before - after
+    }
+    if (current !== entry) entries[index] = current
+  }
+  return {
+    conversation: cleared === 0 ? conversation : { ...conversation, entries },
+    cleared,
+    clearedChars,
+  }
+}
+
+/**
+ * Rung 4. Truncate tool-call inputs above `maxInputChars`, oldest first.
+ *
+ * Only reached when clearing every reachable result and attachment was not
+ * enough, which the census says happens for about half of real over-budget
+ * transcripts.
  */
 export function trimToolInputs(
   conversation: ConversationDocument,
@@ -295,7 +416,7 @@ export function trimToolInputs(
 }
 
 /**
- * Rung 4. Drop whole oldest turns and explain the loss in a synthetic marker.
+ * Rung 5. Drop whole oldest turns and explain the loss in a synthetic marker.
  *
  * Two invariants make this rung safe to ship:
  *
@@ -425,6 +546,40 @@ export function dropOldestTurns(
 
 /**
  * The ladder itself: rungs in order, each applied only as far as needed.
+ *
+ * WHY there is a second pass, and WHY it re-runs the clearing rungs on the
+ * conversation as it stood BEFORE the drop rung rather than on the drop rung's
+ * fallback cut:
+ *
+ * The recent-turn protection keeps rungs 2–4 off the newest `keepRecentTurns`
+ * user turns. When those turns alone exceed the budget, the drop rung cannot
+ * fit any boundary and used to fall back to "keep the last complete turn whole
+ * and throw". That fallback was written to refuse a *fragment* — a transcript
+ * that starts mid-turn — and it is still right to refuse one. But the last turn
+ * being too big was not evidence that only a fragment would fit; it was
+ * evidence that the protection had walled off the only payload left to
+ * reclaim. The recorded case (see `clearAttachments`) was a 15-character
+ * prompt with a 549,526-character screenshot: complete, safe to open on, and
+ * refused for the sake of a preference about recency.
+ *
+ * The design already relaxes the protection when it would cover the WHOLE
+ * conversation (`protectedFromIndex`, the single-turn case), on the argument
+ * that declaring a session unfittable while nine tenths of it is stale payload
+ * is a worse answer than the evidence supports. The second pass is the same
+ * argument applied whenever the protected suffix is the thing that does not
+ * fit. Re-running on the pre-drop conversation rather than on the fallback cut
+ * keeps the ladder's ordering principle intact: once recent payload is on the
+ * table, clearing it may make room for old turns that the first drop attempt
+ * would have thrown away, and the drop rung then removes only what is still
+ * necessary. Running only on the last turn would lose every earlier turn for
+ * certain.
+ *
+ * The lift is reported (`liftedRecentTurnProtection`), because the protection
+ * is a promise the host may have relayed to the user and principle 3 says a
+ * broken promise is not silent either. It is set only when the second pass
+ * actually removed something: a conversation whose newest turn is 300k
+ * characters of the user's own prose still throws, with the flag false, since
+ * there was nothing the lift could legitimately take.
  */
 export function shrinkConversationToBudget(
   conversation: ConversationDocument,
@@ -440,10 +595,13 @@ export function shrinkConversationToBudget(
     clearedChars: 0,
     trimmedInputs: 0,
     trimmedChars: 0,
+    clearedAttachments: 0,
+    clearedAttachmentChars: 0,
     droppedEntries: 0,
     droppedTurns: 0,
     retainedDeveloperMessages: 0,
     promptIndexLength: 0,
+    liftedRecentTurnProtection: false,
     estimatedCharactersBefore: estimateConversationCharacters(conversation),
     estimatedCharactersAfter: 0,
     budgetCharacters,
@@ -453,29 +611,26 @@ export function shrinkConversationToBudget(
   // foreign target can read; the records they summarized are still here.
   const stripped = stripNativeOnlyCompactions(conversation)
   report.strippedCompactions = stripped.stripped
-  let current = stripped.conversation
 
-  // Rung 2: tool outputs are the bulk of coding sessions (median 71.8 % of
-  // characters) and the cheapest thing to lose; the model's own words and
-  // every edit input survive.
-  const cleared = clearToolResults(current, budgetCharacters, options)
-  report.clearedResults = cleared.cleared
-  report.clearedChars = cleared.clearedChars
-  current = cleared.conversation
+  // Rungs 2–4 with the recent-turn protection, then rung 5.
+  const protectedPass = clearPayloads(stripped.conversation, budgetCharacters, options, report)
+  let dropped = dropOldestTurns(protectedPass, budgetCharacters, options)
 
-  // Rung 3: oversized inputs (whole-file writes) beyond a cap.
-  const trimmed = trimToolInputs(current, budgetCharacters, options)
-  report.trimmedInputs = trimmed.trimmed
-  report.trimmedChars = trimmed.trimmedChars
-  current = trimmed.conversation
-
-  // Rung 4: drop whole oldest turns, indexing their prompts in the marker.
-  const dropped = dropOldestTurns(current, budgetCharacters, options)
+  if (dropped.stillExceedsBudget) {
+    // Second pass: the protected suffix alone is over budget. Lift the
+    // protection, clear whatever is left oldest first, and drop again from the
+    // pre-drop conversation so old turns that now fit are not lost.
+    const lifted = clearPayloads(protectedPass, budgetCharacters, { ...options, keepRecentTurns: 0 }, report)
+    if (lifted !== protectedPass) {
+      report.liftedRecentTurnProtection = true
+      dropped = dropOldestTurns(lifted, budgetCharacters, options)
+    }
+  }
   report.droppedEntries = dropped.droppedEntries
   report.droppedTurns = dropped.droppedTurns
   report.retainedDeveloperMessages = dropped.retainedDeveloperMessages
   report.promptIndexLength = dropped.promptIndexLength
-  current = dropped.conversation
+  const current = dropped.conversation
 
   report.estimatedCharactersAfter = estimateConversationCharacters(current)
   if (dropped.stillExceedsBudget || report.estimatedCharactersAfter > budgetCharacters) {
@@ -484,8 +639,43 @@ export function shrinkConversationToBudget(
   return { conversation: current, report }
 }
 
+/**
+ * Rungs 2, 3 and 4 in order, each only as far as needed, accumulating into
+ * `report`. Shared by both passes so the two cannot drift in rung order or in
+ * what they count.
+ *
+ * Rung 2: tool outputs are the bulk of coding sessions (median 71.8 % of
+ * characters) and the cheapest thing to lose; the model's own words and every
+ * edit input survive. Rung 3: attachment payload inside messages, consumed
+ * input like an output. Rung 4: oversized inputs (whole-file writes) beyond a
+ * cap.
+ */
+function clearPayloads(
+  conversation: ConversationDocument,
+  budgetCharacters: number,
+  options: ShrinkOptions,
+  report: ShrinkReport,
+): ConversationDocument {
+  const cleared = clearToolResults(conversation, budgetCharacters, options)
+  report.clearedResults += cleared.cleared
+  report.clearedChars += cleared.clearedChars
+  const attachments = clearAttachments(cleared.conversation, budgetCharacters, options)
+  report.clearedAttachments += attachments.cleared
+  report.clearedAttachmentChars += attachments.clearedChars
+  const trimmed = trimToolInputs(attachments.conversation, budgetCharacters, options)
+  report.trimmedInputs += trimmed.trimmed
+  report.trimmedChars += trimmed.trimmedChars
+  return trimmed.conversation
+}
+
+const CLEARED_PLACEHOLDER_PREFIX = '[tool output cleared during provider switch: '
+
 function clearedPlaceholder(chars: number): string {
-  return `[tool output cleared during provider switch: ${chars} characters]`
+  return `${CLEARED_PLACEHOLDER_PREFIX}${chars} characters]`
+}
+
+function isClearedPlaceholder(output: unknown): boolean {
+  return typeof output === 'string' && output.startsWith(CLEARED_PLACEHOLDER_PREFIX)
 }
 
 /**
@@ -659,6 +849,25 @@ function truncateToSerializedCap(text: string, cap: number): string | null {
 function truncateWithMarker(text: string, keep: number): string {
   const omitted = text.length - keep
   return `${text.slice(0, keep)}\n[tool input trimmed during provider switch: ${omitted} characters omitted]`
+}
+
+/**
+ * Anything in a message that is not the author's words. `image` and
+ * `document` are attachments by definition; an `opaque` item is a block this
+ * parser did not recognise, which every cross-provider projector drops — so
+ * for budget purposes it is payload, never prose.
+ */
+function isAttachment(content: ConversationContent): boolean {
+  return content.kind !== 'text'
+}
+
+function attachmentPlaceholder(content: ConversationContent): string {
+  const noun = content.kind === 'image'
+    ? 'image'
+    : content.kind === 'document'
+      ? 'document'
+      : 'attachment'
+  return `[${noun} omitted during provider switch]`
 }
 
 function isDeveloperMessage(entry: ConversationEntry): entry is ConversationMessage {
