@@ -170,13 +170,71 @@ describe('clearToolResults', () => {
   })
 })
 
+describe('clearing rungs are idempotent', () => {
+  // The ladder's second pass runs rungs 2 and 4 over entries the first pass
+  // already handled. A placeholder or marker must therefore be terminal, or the
+  // report counts one loss twice and the text the target reads quotes the
+  // length of the previous placeholder instead of the content that vanished.
+
+  it('clearToolResults leaves its own placeholder alone but not an output that merely starts like one', () => {
+    const lookalike = `[tool output cleared during provider switch: ${'not a placeholder '.repeat(300)}`
+    const conversation = conversationOf([
+      message('user', 'one', 0),
+      toolCall(1, 'a'),
+      toolResult(2, 'a', 'x'.repeat(4_000)),
+      toolCall(3, 'b'),
+      toolResult(4, 'b', lookalike),
+    ])
+
+    const first = clearToolResults(conversation, 1, { keepRecentTurns: 0 })
+    const second = clearToolResults(first.conversation, 1, { keepRecentTurns: 0 })
+
+    // Both real outputs go, including the one an agent produced by reading a
+    // transcript this ladder had already shrunk.
+    expect(first.cleared).toBe(2)
+    expect(second).toMatchObject({ cleared: 0, clearedChars: 0 })
+    expect(second.conversation).toBe(first.conversation)
+    expect(first.conversation.entries[2]).toMatchObject({
+      output: '[tool output cleared during provider switch: 4000 characters]',
+    })
+  })
+
+  it('trimToolInputs leaves its own marker alone when the input still exceeds the cap', () => {
+    // 120 characters on purpose. The defect only shows when the marker's quoted
+    // number LOSES a digit on the second visit (`120 characters omitted` is a
+    // 71-character marker, and re-trimming it writes `71`, one character
+    // shorter, which passes the net-savings guard). A two-digit path length
+    // re-trims to the same length and hides the bug.
+    const filePath = `/fixture/${'d'.repeat(111)}`
+    expect(filePath).toHaveLength(120)
+    const conversation = conversationOf([
+      message('user', 'refactor it', 0),
+      toolCall(1, 'multi', {
+        file_path: filePath,
+        edits: Array.from({ length: 60 }, (_, index) => ({ old_string: `${'o'.repeat(80)}${index}`, new_string: `${'n'.repeat(80)}${index}` })),
+      }),
+      toolResult(2, 'multi', 'ok'),
+    ])
+
+    const first = trimToolInputs(conversation, 1, { keepRecentTurns: 0 })
+    const second = trimToolInputs(first.conversation, 1, { keepRecentTurns: 0 })
+
+    expect(first.trimmed).toBe(1)
+    expect(second).toMatchObject({ trimmed: 0, trimmedChars: 0 })
+    expect(second.conversation).toBe(first.conversation)
+    // The marker still quotes what was actually lost, not its own length.
+    const input = (first.conversation.entries[1] as { input: Record<string, string> }).input
+    expect(input.file_path).toContain(`${filePath.length} characters omitted]`)
+  })
+})
+
 describe('clearAttachments', () => {
   it('replaces the oldest attachment payloads first and never touches the last three user turns', () => {
     const conversation = attachmentTurns(6, () => image(5_000))
     const before = estimateConversationCharacters(conversation)
-    // Room for exactly two clearings: each image is ~5,050 serialized
-    // characters and its placeholder ~55, so one clearing saves just under
-    // 5,000 and two are needed to shed 9,000.
+    // Room for exactly two clearings: measured, each image item costs 5,104
+    // serialized characters and its placeholder 64, so one clearing saves
+    // 5,040 and two (10,080) are needed to shed 9,000.
     const budget = before - 9_000
 
     const result = clearAttachments(conversation, budget)
@@ -503,6 +561,17 @@ describe('shrinkConversationToBudget', () => {
     // Clearing alone is still not enough at this budget, so the drop rung fired
     // too — the real transcript's proportion.
     expect(report.droppedTurns).toBeGreaterThan(0)
+    // ...but it took only what was still necessary. The lift runs on the
+    // conversation as it stood BEFORE the failed drop, so turns that fit once
+    // the recent payload is gone are kept. A lift that re-ran on the fallback
+    // cut (the last turn alone) would lose `prompt 4` and everything before it
+    // while satisfying every other assertion here.
+    expect(report.droppedTurns).toBeLessThan(5)
+    expect(shrunk.entries).toContainEqual(expect.objectContaining({
+      kind: 'message',
+      role: 'user',
+      content: [{ kind: 'text', text: 'prompt 4' }],
+    }))
     // Never a fragment: the retained history opens on the marker and then a
     // complete user turn.
     expect(shrunk.entries[0]?.kind).toBe('compaction')
@@ -542,6 +611,87 @@ describe('shrinkConversationToBudget', () => {
       output: expect.stringContaining('[tool output cleared during provider switch:'),
     })
     expect(shrunk.entries.find(entry => entry.kind !== 'compaction')).toMatchObject({ kind: 'message', role: 'user' })
+  })
+
+  it('lifts the protection with the cheapest rungs that keep the same history', () => {
+    // Review finding on the first version of the lift: it ran rungs 2→3→4
+    // unconditionally, and because each rung stops only when the WHOLE
+    // conversation fits, rung 2 cleared every recent tool output on its way to
+    // the pasted image that was the actual cause — for no additional retained
+    // history. Scaled from the reviewer's input (549k image, 20k outputs,
+    // 288,000 budget).
+    const entries: ConversationEntry[] = []
+    const line = (): number => entries.length
+    for (let turn = 0; turn < 5; turn += 1) {
+      entries.push(message('user', `old ${turn}`, line()))
+      entries.push(message('assistant', 'w'.repeat(10_000), line()))
+    }
+    for (let turn = 0; turn < 2; turn += 1) {
+      entries.push(message('user', `recent ${turn}`, line()))
+      entries.push(toolCall(line(), `recent-${turn}`))
+      entries.push(toolResult(line(), `recent-${turn}`, 'o'.repeat(2_000)))
+      entries.push(message('assistant', 'ok', line()))
+    }
+    entries.push(message('user', [{ kind: 'text', text: 'This [Image #1]' }, image(55_000)], line()))
+    entries.push(toolCall(line(), 'newest'))
+    entries.push(toolResult(line(), 'newest', 'o'.repeat(2_000)))
+    entries.push(message('assistant', 'I see it', line()))
+    const conversation = conversationOf(entries)
+
+    const { conversation: shrunk, report } = shrinkConversationToBudget(conversation, 28_800)
+
+    expect(estimateConversationCharacters(shrunk)).toBeLessThanOrEqual(28_800)
+    expect(report).toMatchObject({
+      clearedAttachments: 1,
+      clearedResults: 0,
+      liftedRecentTurnProtection: true,
+    })
+    // All three recent outputs are intact: they are what the protection is for.
+    expect(shrunk.entries.filter(entry => entry.kind === 'tool-result').map(entry => entry.output))
+      .toEqual(['o'.repeat(2_000), 'o'.repeat(2_000), 'o'.repeat(2_000)])
+    // ...and no history was traded for them: the full lift keeps the same turns.
+    const everything = shrinkConversationToBudget(
+      conversationOf(entries.map(entry => (entry.kind === 'tool-result' ? { ...entry, output: 'x' } : entry))),
+      28_800,
+    )
+    expect(report.droppedTurns).toBe(everything.report.droppedTurns)
+  })
+
+  it('never counts the same removal twice when the protection is lifted', () => {
+    // A tool input whose bulk is NESTED can never get under the cap, so the
+    // first pass truncates its string member to the bare marker and the second
+    // pass visits it again. Before the marker was made terminal this reported
+    // `trimmedInputs: 2` for one call, rewrote the marker to quote the length of
+    // the previous MARKER, and set `liftedRecentTurnProtection` on a switch
+    // where nothing real was removed — the newest turn here is the user's own
+    // prose, which no rung may take.
+    const entries: ConversationEntry[] = [
+      message('user', 'refactor it', 0),
+      toolCall(1, 'nested', {
+        prompt: 'p'.repeat(30_000),
+        context: Array.from({ length: 400 }, (_, index) => ({ id: index, note: 'small object' })),
+      }),
+      toolResult(2, 'nested', 'ok'),
+      message('assistant', 'done', 3),
+      message('user', 'two', 4),
+      message('assistant', 'a', 5),
+      message('user', 'three', 6),
+      message('assistant', 'b', 7),
+      message('user', 'my own words '.repeat(3_000), 8),
+    ]
+
+    let thrown: unknown
+    try {
+      shrinkConversationToBudget(conversationOf(entries), 20_000)
+    } catch (error) {
+      thrown = error
+    }
+
+    expect(thrown).toBeInstanceOf(ConversationUnfittableError)
+    expect((thrown as ConversationUnfittableError).report).toMatchObject({
+      trimmedInputs: 1,
+      liftedRecentTurnProtection: false,
+    })
   })
 
   it('leaves the protected turns alone whenever dropping older turns is enough', () => {
@@ -619,35 +769,12 @@ describe('shrinkConversationToBudget', () => {
  */
 function turnedConversation(turns: number, resultChars: number): ConversationDocument {
   const entries: ConversationEntry[] = []
-  const at = (): Pick<ConversationEntry, 'timestamp' | 'source'> => ({
-    timestamp: null,
-    source: { provider: 'fixture', line: entries.length, raw: {}, evidence: [] },
-  })
   for (let turn = 0; turn < turns; turn += 1) {
-    entries.push({
-      kind: 'message',
-      role: 'user',
-      content: [{ kind: 'text', text: `prompt ${turn}` }],
-      ...at(),
-    })
-    entries.push({
-      kind: 'tool-call',
-      callId: `call-${turn}`,
-      name: 'Read',
-      input: { path: `/fixture/${turn}` },
-      nativeKind: 'fixture',
-      ...at(),
-    })
-    entries.push({
-      kind: 'tool-result',
-      callId: `call-${turn}`,
-      output: 'x'.repeat(resultChars),
-      isError: false,
-      nativeKind: 'fixture',
-      ...at(),
-    })
+    entries.push(message('user', `prompt ${turn}`, entries.length))
+    entries.push(toolCall(entries.length, `call-${turn}`, { path: `/fixture/${turn}` }))
+    entries.push(toolResult(entries.length, `call-${turn}`, 'x'.repeat(resultChars)))
   }
-  return { schemaVersion: 1, sourceProvider: 'fixture', sourceSessionIds: [], entries }
+  return conversationOf(entries)
 }
 
 /**

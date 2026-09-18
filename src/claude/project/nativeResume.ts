@@ -406,9 +406,19 @@ function claudeMessageContent(
       content.push({ type: 'text', text: item.text })
       continue
     }
-    if ((item.kind === 'image' || item.kind === 'document') && isRecord(item.value)) {
+    if (isRecord(item.value)) {
+      // WHY `opaque` items go through the same decision as images: a Claude
+      // transcript written by the projector BEFORE #29 carries the foreign part
+      // verbatim, and the Claude decoder reads that stray `{type:'file', …}`
+      // block back as `opaque`. The same-provider branch below would then copy
+      // it verbatim again on duplicate or rewind — its "the installed provider
+      // already wrote and loaded it" argument is false for this block, because
+      // this package wrote it and the API has already rejected it. Re-encoding
+      // it here is what gives an already-poisoned session a way out inside
+      // Claude. An opaque value is never treated as `native`: only the decoder's
+      // own `image` / `document` kinds vouch for a Claude-shaped block.
       const block = claudeAttachmentBlock(item.value)
-      if (block.kind === 'native') {
+      if (block.kind === 'native' && item.kind !== 'opaque') {
         content.push({ ...item.value })
         continue
       }
@@ -485,10 +495,38 @@ type ClaudeAttachmentBlock =
  * a text document would need the `source.type: 'text'` shape and a decoded
  * payload, neither observed.
  *
- * WHY a Claude-shaped value passes through by reference to the caller's copy:
- * Claude → Claude duplication and rewind carry Claude-authored blocks, and the
- * evidence-gated rule for those is "the source already wrote it and loaded it".
+ * WHY the media types are a closed set and the payload is validated: the point
+ * of this function is that nothing reaches the file that the API will reject on
+ * the next prompt, because that failure is permanent and invisible until then.
+ * `image/*` is too wide — Claude Code's own reference accepts exactly png, jpeg,
+ * gif and webp (`vendor/claude-code-src/full/utils/imageResizer.ts`,
+ * `ImageMediaType`), so an OpenCode session on a provider that takes HEIC or SVG
+ * would have produced the very block-stays-in-history 400 this fix exists to
+ * end. The same goes for a payload that is not plain base64 (RFC 2397 allows
+ * percent-encoding and line breaks; the API does not) and for one over the
+ * API's 5 MB base64 limit (`constants/apiLimits.ts`,
+ * `API_IMAGE_MAX_BASE64_SIZE`) — Claude Code downsizes its own pastes, a foreign
+ * part was never downsized. All of those fall through to the drop, where the
+ * loss is on the record instead of on the wire. RFC 2397 parameters
+ * (`;name=x;base64,`) and an upper-case `;BASE64,` do not match the parser
+ * below and are dropped too: safe direction, and no recorded producer emits
+ * them.
+ *
+ * A `native` result carries no value because the caller already holds the
+ * block and emits its own shallow copy, exactly as it did before this function
+ * existed; Claude → Claude duplication and rewind carry Claude-authored blocks,
+ * and the evidence-gated rule for those is "the source already wrote it and
+ * loaded it".
  */
+const CLAUDE_IMAGE_MEDIA_TYPES: ReadonlySet<string> = new Set([
+  'image/png',
+  'image/jpeg',
+  'image/gif',
+  'image/webp',
+])
+const CLAUDE_IMAGE_MAX_BASE64_CHARS = 5 * 1024 * 1024
+const PLAIN_BASE64 = /^[A-Za-z0-9+/]+={0,2}$/
+
 function claudeAttachmentBlock(value: Record<string, unknown>): ClaudeAttachmentBlock {
   if ((value.type === 'image' || value.type === 'document') && isRecord(value.source)) {
     return { kind: 'native' }
@@ -504,12 +542,18 @@ function claudeAttachmentBlock(value: Record<string, unknown>): ClaudeAttachment
   // field is the part's claim about them and only fills in when the URL omits
   // one (`data:;base64,…` is legal).
   const mediaType = parsed.mediaType || (typeof value.mime === 'string' ? value.mime : '')
-  const type = mediaType.startsWith('image/')
+  const type = CLAUDE_IMAGE_MEDIA_TYPES.has(mediaType)
     ? 'image'
     : mediaType === 'application/pdf'
       ? 'document'
       : null
   if (type === null) return { kind: 'unrepresentable' }
+  // Length first: it is O(1), and it spares the regex a multi-megabyte scan of
+  // a payload that is going to be dropped anyway.
+  if (type === 'image' && parsed.data.length > CLAUDE_IMAGE_MAX_BASE64_CHARS) {
+    return { kind: 'unrepresentable' }
+  }
+  if (!PLAIN_BASE64.test(parsed.data)) return { kind: 'unrepresentable' }
   return {
     kind: 'repaired',
     value: { type, source: { type: 'base64', media_type: mediaType, data: parsed.data } },

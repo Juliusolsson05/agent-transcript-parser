@@ -733,6 +733,99 @@ describe('Claude native resume converts foreign image parts (#29)', () => {
     expect(JSON.stringify(result.values)).not.toContain('spec.pdf')
   })
 
+  it('drops what the Claude API would reject instead of re-encoding it', () => {
+    // Each of these would have been written as a base64 block by a looser rule
+    // and rejected on the next prompt, with the block stuck in history: a
+    // media type outside the API's closed set, a non-PDF document, a payload
+    // that is legal RFC 2397 but not plain base64, an empty payload, and an
+    // image over the API's 5 MB base64 limit.
+    const rejected = [
+      { kind: 'image', value: { type: 'file', mime: 'image/svg+xml', url: 'data:image/svg+xml;base64,AAAA' } },
+      { kind: 'image', value: { type: 'input_image', image_url: 'data:image/heic;base64,AAAA' } },
+      { kind: 'document', value: { type: 'file', mime: 'text/plain', url: 'data:text/plain;base64,AAAA' } },
+      { kind: 'image', value: { type: 'file', mime: 'image/png', url: 'data:image/png;base64,AA%2BA%3D%3D' } },
+      { kind: 'image', value: { type: 'file', mime: 'image/png', url: 'data:image/png;base64,' } },
+      { kind: 'image', value: { type: 'file', mime: 'image/png', url: `data:image/png;base64,${'A'.repeat(5 * 1024 * 1024 + 4)}` } },
+    ] as const
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'opencode',
+      sourceSessionIds: ['ses_source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [{ kind: 'text', text: 'see these' }, ...rejected],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values[0]).toMatchObject({ message: { content: 'see these' } })
+    expect(result.report.changes.filter(change => /content\.(image|document)\.dropped$/.test(change.code)))
+      .toHaveLength(rejected.length)
+    expect(result.report.changes.some(change => change.code.endsWith('.repaired'))).toBe(false)
+  })
+
+  it('takes the media type from the part when the data URL omits it', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'opencode',
+      sourceSessionIds: ['ses_source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [{ kind: 'image', value: { type: 'file', mime: 'image/webp', url: 'data:;base64,AAAA' } }],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values[0]).toMatchObject({
+      message: { content: [{ type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'AAAA' } }] },
+    })
+  })
+
+  it('heals a Claude transcript the old projector already poisoned, on duplicate or rewind', () => {
+    // What the Claude decoder makes of the stray block the pre-#29 projector
+    // wrote: an `opaque` item. Same-provider projection used to copy it
+    // verbatim again, so a bricked session stayed bricked through every clone.
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'claude',
+      sourceSessionIds: ['source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [
+          { kind: 'text', text: 'why is the padding off here' },
+          {
+            kind: 'opaque',
+            nativeType: 'file',
+            value: { type: 'file', mime: 'image/png', filename: 'clipboard', url: 'data:image/png;base64,AAAA', id: 'prt_1' },
+          },
+        ],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values[0]).toMatchObject({
+      message: {
+        content: [
+          { type: 'text', text: 'why is the padding off here' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      },
+    })
+    expect(JSON.stringify(result.values)).not.toContain('"type":"file"')
+    expect(result.report.changes).toContainEqual(expect.objectContaining({
+      code: 'native-resume.content.opaque.repaired',
+    }))
+  })
+
   it('drops a user message whose only content was an attachment Claude cannot embed', () => {
     const document: ConversationDocument = {
       schemaVersion: 1,

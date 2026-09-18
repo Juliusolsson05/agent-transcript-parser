@@ -123,8 +123,9 @@ function filler(chars: number): string {
 // any test that needs a payload of a controlled length — a tool output the
 // clearing rung can act on, an image that dominates its turn — has to build
 // the conversation itself. The planner suite and the ladder suite both need
-// that, and two private copies of the same builders had already appeared
-// before they were moved here. Every builder takes the entry's `line` so a
+// that: the planner suite had a private copy of these builders and the ladder
+// suite hand-built the same three entry shapes inline, so both now build from
+// here. Every builder takes the entry's `line` so a
 // test can still reason about source coordinates.
 
 export function source(

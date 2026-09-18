@@ -1,4 +1,4 @@
-Status: In progress
+Status: Complete
 
 # Provider switches survive pasted images
 
@@ -72,15 +72,26 @@ test from the recorded *shape*, which is what caveat 1 prescribes.
      `clearedAttachmentChars` (net).
    - `shrinkConversationToBudget`: two passes. Pass 1 is today's ladder with
      the new rung inserted (strip → results → attachments → inputs → drop). If
-     the drop rung reports `stillExceedsBudget`, pass 2 re-runs the three
-     clearing rungs with `keepRecentTurns: 0` on the pre-drop conversation and
-     drops again. Only then throw. Report `liftedRecentTurnProtection: true`
-     when pass 2 ran and removed anything.
+     the drop rung reports `stillExceedsBudget`, pass 2 lifts the protection
+     (`keepRecentTurns: 0`) on the pre-drop conversation and drops again. Only
+     then throw. Report `liftedRecentTurnProtection: true` when pass 2 removed
+     anything.
+   - As built after review: pass 2 does not simply run all three rungs. Each
+     rung stops only when the whole conversation fits, which inside the lifted
+     range it rarely can, so the first version cleared every recent tool output
+     on its way to the pasted image that was the cause (256 → 262 outputs on the
+     recorded transcript, for no extra retained history). `liftProtection` now
+     measures the full lift first, then tries the cheaper rung subsets in
+     ladder-cost order and takes the first that fits and drops no more entries
+     than the full lift. "Removed anything" is read from the counts, not from
+     object identity, and rungs 2 and 4 treat their own placeholder / marker as
+     terminal so a second visit can never count one loss twice.
    - `ShrinkReport` gains the three fields; `ConversationUnfittableError`
      message unchanged.
-3. `operations/contextBudget.ts`: no logic change; the planner's `shrunk`
-   outcome carries the extended report automatically. Comments that number the
-   rungs are updated (rung 4 → rung 5 for the drop).
+3. `operations/contextBudget.ts`: no change at all. The planner's `shrunk`
+   outcome carries the extended report automatically, and the file was checked
+   for rung-numbered comments: it has none (`grep -n "rung" ` returns nothing),
+   so there was nothing to renumber.
 4. Tests, written before the implementation and failing first:
    - `testing/engine/shrink.test.ts`: `clearAttachments` unit cases (oldest
      first, protection honoured, all three content kinds, net-savings guard,
@@ -105,16 +116,49 @@ test from the recorded *shape*, which is what caveat 1 prescribes.
    with the existing `native-resume.content.<kind>.dropped` change. Tests in
    `testing/engine/nativeResumeProjection.test.ts` cover the OpenCode shape,
    the Codex shape, passthrough, and the drop.
+   As built after review: `image/*` was too wide. Images are limited to the
+   API's closed set (png, jpeg, gif, webp, per the vendored Claude Code
+   reference), the payload must be plain base64 and an image must be within the
+   API's 5 MB base64 limit; everything else drops with a change record. An
+   `opaque` item whose value carries such a data URL is re-encoded too, which is
+   what lets a Claude transcript the OLD projector already poisoned be healed by
+   a Claude → Claude duplicate or rewind.
 6. README / package surface: `clearAttachments` is exported alongside the other
-   rungs; `packageSurface.test.ts` updated if it enumerates exports.
+   rungs through `export *`. Checked: `packageSurface.test.ts` spot-checks
+   adapters and does not enumerate operations exports, and neither `README.md`
+   nor `docs/ghost.md` mentions the ladder or a report field, so neither needed
+   a change.
+
+## Review round
+
+Four read-only reviewers (two per PR). No blocking findings. Fixed here: the
+non-idempotent input trim and its false lift flag; the wasteful full lift
+(subset search above); the over-wide image media types and unvalidated payload;
+healing of already-poisoned Claude transcripts; the prefix-only placeholder
+test; two rung references the renumbering missed; the module header's stale
+design pointer; missing tests (older turns survive the lift, the PDF-only gate,
+the `mime` fallback, direct idempotency of rungs 2 and 4). Each new regression
+test was mutation-checked: reverting its fix fails exactly that test.
+
+Declined, with reasons: RFC 2397 parameters and upper-case `;BASE64,` are
+dropped rather than parsed (safe direction, no recorded producer emits them).
+"Protection outranks the drop rung when the first pass fits" — one stale
+screenshot inside the protected turns can cost many old turns — is a real
+cost but belongs with the estimator fix (#30), where the overcharge that makes
+it common is addressed. The long-`file_path`-becomes-a-marker behaviour of
+`trimToolCallInput` on nested-bulk inputs predates this work and is filed
+separately.
 
 ## Verification
 
 - `npm run check` in this package (contract, typecheck, all tests, packed
-  surface) on Node 24.
+  surface) on Node 24: green.
 - The recorded transcript replayed through `planConversationContext(…,
   'opencode', 288_000, { allowSourceTurns: false })` via a scratch script (not
-  committed — it reads a personal transcript): must return `shrunk` under
-  budget with the final user message retained.
+  committed — it reads a personal transcript): `shrunk` in 70 ms,
+  32,605 characters retained, `clearedResults: 256`, `clearedAttachments: 2`,
+  `trimmedInputs: 3`, `droppedTurns: 13`, `liftedRecentTurnProtection: true`;
+  the newest user message is `This [Image #1]` plus the image placeholder and
+  the recent tool outputs are intact.
 - Host verification (tsc on both projects, the provider-switch test suite,
   `describeShrink`) happens in the agent-code bump PR.

@@ -11,7 +11,7 @@ import {
   portableCodexHandoffAfterLine,
   portableOpencodeHandoffAfterLine,
 } from '../../src/operations/compaction.js'
-import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
+import type { ConversationDocument } from '../../src/conversation/types.js'
 import { resolveCodexTargetProfileFromSources } from '../../src/codex/profile/targetProfile.js'
 import { estimateConversationCharacters } from '../../src/operations/estimate.js'
 import { ConversationUnfittableError } from '../../src/operations/shrink.js'
