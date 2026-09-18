@@ -605,6 +605,156 @@ describe('native-resume projection of a shrunk conversation', () => {
   })
 })
 
+describe('Claude native resume converts foreign image parts (#29)', () => {
+  const claudeOptions = {
+    targetSessionId: 'claude-target',
+    now,
+    cwd: '/fixture/project',
+    version: '2.1.277',
+    model: 'claude-fixture',
+  }
+
+  it('rewrites an OpenCode file part into the observed Claude base64 image block', () => {
+    // The recorded failure: this exact part shape was copied verbatim into a
+    // Claude transcript and the API answered
+    // "400 … Input tag 'file' found using 'type' does not match any of the
+    // expected tags" on the next prompt, bricking the session.
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'opencode',
+      sourceSessionIds: ['ses_source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [
+          { kind: 'text', text: 'why is the padding off here' },
+          {
+            kind: 'image',
+            value: {
+              type: 'file',
+              mime: 'image/png',
+              filename: 'clipboard',
+              url: 'data:image/png;base64,AAAA',
+              source: { type: 'file', path: 'clipboard', text: { value: '[Image 1]', start: 0, end: 9 } },
+              id: 'prt_1',
+              sessionID: 'ses_source',
+              messageID: 'msg_1',
+            },
+          },
+        ],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values).toHaveLength(1)
+    expect(result.values[0]).toMatchObject({
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'why is the padding off here' },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+        ],
+      },
+    })
+    const emitted = JSON.stringify(result.values)
+    expect(emitted).not.toContain('"type":"file"')
+    expect(emitted).not.toContain('prt_1')
+    expect(result.report.changes).toContainEqual(expect.objectContaining({
+      code: 'native-resume.content.image.repaired',
+      kind: 'repaired',
+    }))
+  })
+
+  it('rewrites a Codex input_image data URL and drops a remote URL it cannot embed', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'codex',
+      sourceSessionIds: ['source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [
+          { kind: 'image', value: { type: 'input_image', image_url: 'data:image/jpeg;base64,BBBB' } },
+          { kind: 'image', value: { type: 'input_image', image_url: 'https://example.invalid/fixture' } },
+          { kind: 'text', text: 'see attached' },
+        ],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values[0]).toMatchObject({
+      message: {
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'BBBB' } },
+          { type: 'text', text: 'see attached' },
+        ],
+      },
+    })
+    expect(JSON.stringify(result.values)).not.toContain('input_image')
+    // The remote URL is dropped, not guessed into an unobserved `source.type:
+    // 'url'` block, and the loss is on the record.
+    expect(result.report.changes).toContainEqual(expect.objectContaining({
+      code: 'native-resume.content.image.dropped',
+      kind: 'dropped',
+    }))
+  })
+
+  it('keeps a Claude-shaped image block and turns a PDF data URL into a document block', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'opencode',
+      sourceSessionIds: ['ses_source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [
+          { kind: 'image', value: { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'CCCC' } } },
+          { kind: 'document', value: { type: 'file', mime: 'application/pdf', filename: 'spec.pdf', url: 'data:application/pdf;base64,DDDD' } },
+        ],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values[0]).toMatchObject({
+      message: {
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'CCCC' } },
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'DDDD' } },
+        ],
+      },
+    })
+    expect(JSON.stringify(result.values)).not.toContain('spec.pdf')
+  })
+
+  it('drops a user message whose only content was an attachment Claude cannot embed', () => {
+    const document: ConversationDocument = {
+      schemaVersion: 1,
+      sourceProvider: 'opencode',
+      sourceSessionIds: ['ses_source'],
+      entries: [{
+        kind: 'message',
+        role: 'user',
+        content: [{ kind: 'document', value: { type: 'file', mime: 'text/plain', url: 'https://example.invalid/notes.txt' } }],
+        ...source(0, {}),
+      }],
+    }
+
+    const result = projectClaudeNativeResume(document, claudeOptions)
+
+    expect(result.values).toHaveLength(0)
+    expect(result.report.changes).toContainEqual(expect.objectContaining({
+      code: 'native-resume.message.empty-after-filtering',
+    }))
+  })
+})
+
 function conversation(): ConversationDocument {
   return {
     schemaVersion: 1,

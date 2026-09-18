@@ -407,8 +407,23 @@ function claudeMessageContent(
       continue
     }
     if ((item.kind === 'image' || item.kind === 'document') && isRecord(item.value)) {
-      content.push({ ...item.value })
-      continue
+      const block = claudeAttachmentBlock(item.value)
+      if (block.kind === 'native') {
+        content.push({ ...item.value })
+        continue
+      }
+      if (block.kind === 'repaired') {
+        content.push(block.value)
+        changes.push(claudeChange(
+          entry,
+          'repaired',
+          `native-resume.content.${item.kind}.repaired`,
+          `Re-encoded a foreign ${item.kind} part as a Claude base64 ${block.value.type} block.`,
+        ))
+        continue
+      }
+      // Unrepresentable: fall through to the drop below so the loss is on the
+      // record instead of on the wire.
     }
     if (preserveNativeContent && item.kind === 'opaque' && isRecord(item.value)) {
       // WHY same-provider duplication may retain an unknown block that the
@@ -427,6 +442,86 @@ function claudeMessageContent(
     ))
   }
   return content
+}
+
+type ClaudeAttachmentBlock =
+  | { kind: 'native' }
+  | {
+      kind: 'repaired'
+      value: {
+        type: 'image' | 'document'
+        source: { type: 'base64'; media_type: string; data: string }
+      }
+    }
+  | { kind: 'unrepresentable' }
+
+/**
+ * Decide what a neutral `image` / `document` value becomes in a Claude file.
+ *
+ * WHY this exists (#29): the neutral content item keeps the SOURCE provider's
+ * native part as `value`, and this projector used to copy it verbatim. The
+ * OpenCode decoder wraps `{type:'file', mime, url:'data:…', id:'prt_…',
+ * sessionID, messageID, …}` and the Codex decoder wraps
+ * `{type:'input_image', image_url}`. Written into a Claude transcript unchanged,
+ * either shape is accepted by the TUI — it renders the history without
+ * complaint — and rejected by the API on the very next prompt:
+ *
+ *   400 messages.985.content.1: Input tag 'file' found using 'type' does not
+ *   match any of the expected tags: …, 'document', 'image', …
+ *
+ * (recorded 2026-09-18 on an OpenCode → Claude switch, Claude Code 2.1.277).
+ * Because the block stays in history, every later turn fails the same way and
+ * the session is unusable; before the 400 the model also answered "I can't
+ * view images in this session", so the image was invisible even on the turns
+ * that went through. The other two projectors already re-encode in their
+ * direction (`codexImage`, `filePart`); this was the only one that did not.
+ *
+ * WHY only base64 data URLs are re-encoded: the observed Claude fixtures
+ * (`claude-message-block-image`, `claude-message-block-document`) show
+ * `source.type: 'base64'` and nothing else. A remote `https:` image (the Codex
+ * `input_image` fixture shape) would need `source.type: 'url'`, which this
+ * profile has no evidence for, so it is dropped with a change record rather
+ * than guessed. Documents are limited to `application/pdf` for the same reason:
+ * a text document would need the `source.type: 'text'` shape and a decoded
+ * payload, neither observed.
+ *
+ * WHY a Claude-shaped value passes through by reference to the caller's copy:
+ * Claude → Claude duplication and rewind carry Claude-authored blocks, and the
+ * evidence-gated rule for those is "the source already wrote it and loaded it".
+ */
+function claudeAttachmentBlock(value: Record<string, unknown>): ClaudeAttachmentBlock {
+  if ((value.type === 'image' || value.type === 'document') && isRecord(value.source)) {
+    return { kind: 'native' }
+  }
+  const url = typeof value.url === 'string'
+    ? value.url
+    : typeof value.image_url === 'string'
+      ? value.image_url
+      : null
+  const parsed = url === null ? null : parseBase64DataUrl(url)
+  if (!parsed) return { kind: 'unrepresentable' }
+  // The data URL's own media type is what the bytes are; the OpenCode `mime`
+  // field is the part's claim about them and only fills in when the URL omits
+  // one (`data:;base64,…` is legal).
+  const mediaType = parsed.mediaType || (typeof value.mime === 'string' ? value.mime : '')
+  const type = mediaType.startsWith('image/')
+    ? 'image'
+    : mediaType === 'application/pdf'
+      ? 'document'
+      : null
+  if (type === null) return { kind: 'unrepresentable' }
+  return {
+    kind: 'repaired',
+    value: { type, source: { type: 'base64', media_type: mediaType, data: parsed.data } },
+  }
+}
+
+function parseBase64DataUrl(url: string): { mediaType: string; data: string } | null {
+  // Anchored and linear so a 700k-character payload (the recorded size) costs
+  // one pass; the media type stops at the first `;` or `,` per RFC 2397.
+  const match = /^data:([^;,]*);base64,([\s\S]*)$/.exec(url)
+  if (!match) return null
+  return { mediaType: match[1] ?? '', data: match[2] ?? '' }
 }
 
 function invalidClaudeToolPairEntries(
