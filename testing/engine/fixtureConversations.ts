@@ -4,7 +4,12 @@ import { classifyClaudeDocument } from '../../src/claude/classify/index.js'
 import { decodeClaudeConversation } from '../../src/claude/conversation/index.js'
 import { classifyCodexDocument } from '../../src/codex/classify/index.js'
 import { decodeCodexConversation } from '../../src/codex/conversation/index.js'
-import type { ConversationDocument, ConversationEntry } from '../../src/conversation/types.js'
+import type {
+  ConversationContent,
+  ConversationDocument,
+  ConversationEntry,
+  ConversationMessage,
+} from '../../src/conversation/types.js'
 import { decodeJsonl } from '../../src/jsonl/codec.js'
 
 // Shared loaders for the Stage 0 observed-sequence fixtures. Three suites now
@@ -107,4 +112,143 @@ function inflateInput(input: unknown, chars: number): unknown {
 function filler(chars: number): string {
   const unit = 'census-scaled payload. '
   return unit.repeat(Math.ceil(chars / unit.length)).slice(0, chars)
+}
+
+// ---------------------------------------------------------------------------
+// Hand-built neutral entries, for assertions about CHARACTERS.
+// ---------------------------------------------------------------------------
+//
+// WHY these live next to the fixture loaders above instead of inside one test
+// file: census caveat 1 says the committed fixtures prove shape, not size, so
+// any test that needs a payload of a controlled length — a tool output the
+// clearing rung can act on, an image that dominates its turn — has to build
+// the conversation itself. The planner suite and the ladder suite both need
+// that: the planner suite had a private copy of these builders and the ladder
+// suite hand-built the same three entry shapes inline, so both now build from
+// here. Every builder takes the entry's `line` so a
+// test can still reason about source coordinates.
+
+export function source(
+  line: number,
+  raw: Record<string, unknown> = {},
+): Pick<ConversationEntry, 'timestamp' | 'source'> {
+  return {
+    timestamp: '2026-07-21T00:00:00.000Z',
+    source: { provider: 'fixture', line, raw, evidence: [] },
+  }
+}
+
+export function message(
+  role: ConversationMessage['role'],
+  content: string | ConversationContent[],
+  line: number,
+): ConversationEntry {
+  return {
+    kind: 'message',
+    role,
+    content: typeof content === 'string' ? [{ kind: 'text', text: content }] : content,
+    ...source(line),
+  }
+}
+
+export function toolCall(
+  line: number,
+  callId = 'call-1',
+  input: unknown = { path: '/tmp/file' },
+): ConversationEntry {
+  return {
+    kind: 'tool-call',
+    callId,
+    name: 'Read',
+    input,
+    nativeKind: 'fixture',
+    ...source(line),
+  }
+}
+
+export function toolResult(
+  line: number,
+  callId = 'call-1',
+  output: unknown = 'contents',
+): ConversationEntry {
+  return {
+    kind: 'tool-result',
+    callId,
+    output,
+    isError: false,
+    nativeKind: 'fixture',
+    ...source(line),
+  }
+}
+
+/**
+ * A base64 image content item whose payload is `chars` characters long, in the
+ * observed Claude block shape (`claude-message-block-image`). The estimator
+ * charges the whole serialized value, so `chars` is also roughly what the item
+ * costs the budget.
+ */
+export function image(chars: number): ConversationContent {
+  return {
+    kind: 'image',
+    value: {
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/png', data: 'A'.repeat(chars) },
+    },
+  }
+}
+
+export function conversationOf(
+  entries: ConversationEntry[],
+  sourceProvider = 'fixture',
+): ConversationDocument {
+  return { schemaVersion: 1, sourceProvider, sourceSessionIds: ['source'], entries }
+}
+
+/**
+ * The shape behind agent-transcript-parser#28, scaled down.
+ *
+ * The real transcript (recorded 2026-09-18, 1,100 entries, 16 safe boundaries)
+ * ended with two user turns that no rung could touch: a 129-character prompt
+ * carrying a 713,997-character `opaque` block — an OpenCode `file` part that an
+ * earlier OpenCode → Claude switch had copied into the Claude file — and then
+ * a 15-character prompt carrying a 549,526-character base64 screenshot,
+ * followed only by zero-cost opaque records (attachments, an `api_error`). Every
+ * earlier turn was an ordinary tool cycle. Against a 288,000-character budget
+ * the ladder cleared 256 outputs, trimmed 3 inputs, dropped 15 turns and still
+ * threw, because the newest turn was 99.98 % one image.
+ *
+ * Sizes here are 1/20th to 1/25th of the real ones so a budget of a few
+ * thousand characters reproduces the same arithmetic: the tool cycles alone
+ * would fit after clearing, and each of the two attachments alone exceeds the
+ * budget. Assistant replies are padded so that clearing every payload is still
+ * not enough and the drop rung has to fire as well — which is the real
+ * transcript's proportion, not an embellishment.
+ */
+export function pastedImageTailConversation(): ConversationDocument {
+  const entries: ConversationEntry[] = []
+  const line = (): number => entries.length
+  for (let turn = 0; turn < 5; turn += 1) {
+    entries.push(message('user', `prompt ${turn}`, line()))
+    entries.push(toolCall(line(), `call-${turn}`, { command: `ls -la /fixture/${turn}` }))
+    entries.push(toolResult(line(), `call-${turn}`, 'directory listing '.repeat(120)))
+    entries.push(message('assistant', `done with ${turn}. `.repeat(50), line()))
+  }
+  entries.push(message('user', [
+    { kind: 'text', text: 'can you figure out why the padding is off in the attached screenshot' },
+    {
+      kind: 'opaque',
+      nativeType: 'file',
+      value: {
+        type: 'file',
+        mime: 'image/png',
+        filename: 'clipboard',
+        url: `data:image/png;base64,${'B'.repeat(20_000)}`,
+      },
+    },
+  ], line()))
+  entries.push(message('assistant', "Two things up front: I can't view images in this session.", line()))
+  entries.push(message('user', [{ kind: 'text', text: 'This [Image #1]' }, image(30_000)], line()))
+  entries.push({ kind: 'opaque', nativeType: 'attachment', ...source(line()) })
+  entries.push({ kind: 'opaque', nativeType: 'api_error', ...source(line()) })
+  return conversationOf(entries, 'claude')
 }
