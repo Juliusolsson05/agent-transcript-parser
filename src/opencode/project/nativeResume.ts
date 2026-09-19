@@ -324,7 +324,8 @@ function filePart(content: Extract<ConversationContent, { kind: 'image' | 'docum
       typeof source?.media_type === 'string' ? source.media_type :
         content.kind === 'image' ? 'image/png' : 'application/octet-stream'
   )
-  const url = nativeUrl ?? (
+  const sourceUrl = source?.type === 'url' && typeof source.url === 'string' ? source.url : null
+  const url = nativeUrl ?? sourceUrl ?? (
     source?.type === 'base64' && typeof source.data === 'string'
       ? `data:${mediaType};base64,${source.data}`
       : null
