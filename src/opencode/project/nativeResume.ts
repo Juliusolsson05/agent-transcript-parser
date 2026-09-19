@@ -34,6 +34,18 @@ export interface OpencodeNativeResumeOptions extends ProjectionBaseOptions {
   cliVersion: string
   modelProvider: string
   model: string
+  /**
+   * The model's reasoning variant (OpenCode's per-model effort level, e.g.
+   * "max"), from the target machine's model.json.
+   *
+   * WHY it is stamped (Agent Code switch B18 review): OpenCode Terminal
+   * restores the model AND its variant from the last user message, then
+   * saves that variant to model.json. Without one, the first open of a
+   * switched session reset the user's saved effort for that model to
+   * "default", everywhere. "default" itself is omitted, as OpenCode's own
+   * writer omits it.
+   */
+  modelVariant?: string
   agent?: string
   idFactory?: (seed: string) => string
 }
@@ -73,7 +85,11 @@ export function projectOpencodeNativeResume(
   const makeId = options.idFactory ?? archiveId
   const sessionID = nativeId('ses', options.targetSessionId, makeId)
   const agent = options.agent ?? 'build'
-  const model = { providerID: options.modelProvider, modelID: options.model }
+  const model = {
+    providerID: options.modelProvider,
+    modelID: options.model,
+    ...(options.modelVariant && options.modelVariant !== 'default' ? { variant: options.modelVariant } : {}),
+  }
   const pairs = pairConversationTools(conversation.entries)
   const pairByCall = new Map(pairs.pairs.map(pair => [pair.callIndex, pair.resultIndex]))
   let nextIdentity = 0

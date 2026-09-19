@@ -61,6 +61,25 @@ describe('projectOpencodeNativeResume', () => {
     expect(projection.report.counts.preserved).toBe(4)
   })
 
+  // Agent Code switch B18 review: OpenCode Terminal restores the model AND
+  // its reasoning variant from the last user message, and saves that variant
+  // to model.json. A message without one reset the user's saved effort (for
+  // example glm-5.3 at "max") to "default" the first time the pane opened.
+  // The shape is OpenCode 1.18.31's user-message schema:
+  // model: { providerID, modelID, variant?: string }.
+  it('stamps the model variant on user messages, and omits "default" as OpenCode does', () => {
+    const project = (modelVariant?: string) => projectOpencodeNativeResume(source, {
+      cwd: '/workspace', targetSessionId: 'target-session', now: '2026-09-03T12:00:00.000Z',
+      cliVersion: '1.18.31', modelProvider: 'zai-coding-plan', model: 'glm-5.3', modelVariant,
+    }).values[0] as { messages: Array<{ info: { role: string; model?: Record<string, unknown> } }> }
+    const userModels = (modelVariant?: string) => project(modelVariant).messages
+      .filter(message => message.info.role === 'user').map(message => message.info.model)
+
+    expect(userModels('max')).toEqual([{ providerID: 'zai-coding-plan', modelID: 'glm-5.3', variant: 'max' }])
+    expect(userModels('default')).toEqual([{ providerID: 'zai-coding-plan', modelID: 'glm-5.3' }])
+    expect(userModels(undefined)).toEqual([{ providerID: 'zai-coding-plan', modelID: 'glm-5.3' }])
+  })
+
   it('round-trips projected semantic content through the OpenCode decoder', () => {
     const projection = projectOpencodeNativeResume(source, {
       cwd: '/workspace',
