@@ -17,6 +17,7 @@ import type {
 } from '../../projection/types.js'
 import { pairConversationTools } from '../../projection/toolPairs.js'
 import { createProjectionReport, type ProjectionChange } from '../../report/types.js'
+import { parseBase64DataUrl } from '../../dataUrl.js'
 
 const TARGET = 'claude' as const
 const CLAUDE_NATIVE_EVIDENCE: EvidenceClaim = {
@@ -560,13 +561,6 @@ function claudeAttachmentBlock(value: Record<string, unknown>): ClaudeAttachment
   }
 }
 
-function parseBase64DataUrl(url: string): { mediaType: string; data: string } | null {
-  // Anchored and linear so a 700k-character payload (the recorded size) costs
-  // one pass; the media type stops at the first `;` or `,` per RFC 2397.
-  const match = /^data:([^;,]*);base64,([\s\S]*)$/.exec(url)
-  if (!match) return null
-  return { mediaType: match[1] ?? '', data: match[2] ?? '' }
-}
 
 function invalidClaudeToolPairEntries(
   entries: readonly ConversationEntry[],
