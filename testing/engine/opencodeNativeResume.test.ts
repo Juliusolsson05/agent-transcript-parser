@@ -80,6 +80,21 @@ describe('projectOpencodeNativeResume', () => {
     expect(userModels(undefined)).toEqual([{ providerID: 'zai-coding-plan', modelID: 'glm-5.3' }])
   })
 
+  it('writes the variant on the SESSION ROW, where a programmatic prompt reads it', () => {
+    // The row's shape is not the message's: `id` rather than `modelID`, and
+    // OpenCode always stores a variant there — `"default"` included (verified
+    // against a live 1.18.31 database). Leaving it out made an imported
+    // session answer its next programmatic prompt at default effort while
+    // every imported message said `max`.
+    const info = (modelVariant?: string) => (projectOpencodeNativeResume(source, {
+      cwd: '/workspace', targetSessionId: 'target-session', now: '2026-09-03T12:00:00.000Z',
+      cliVersion: '1.18.31', modelProvider: 'zai-coding-plan', model: 'glm-5.3', modelVariant,
+    }).values[0] as { info: { model: Record<string, unknown> } }).info
+
+    expect(info('max').model).toEqual({ id: 'glm-5.3', providerID: 'zai-coding-plan', variant: 'max' })
+    expect(info(undefined).model).toEqual({ id: 'glm-5.3', providerID: 'zai-coding-plan', variant: 'default' })
+  })
+
   it('round-trips projected semantic content through the OpenCode decoder', () => {
     const projection = projectOpencodeNativeResume(source, {
       cwd: '/workspace',

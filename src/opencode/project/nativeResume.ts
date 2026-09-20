@@ -282,7 +282,22 @@ export function projectOpencodeNativeResume(
       path: '',
       title: `Imported ${conversation.sourceProvider} session`,
       agent,
-      model: { id: options.model, providerID: options.modelProvider },
+      // The SESSION ROW's model, which is a different shape from a message's
+      // (`id` here, `modelID` there) and a different rule: OpenCode always
+      // writes a variant on the row, `"default"` included. Verified against a
+      // live 1.18.31 database, every session:
+      //   {"id":"glm-5.3","providerID":"zai-coding-plan","variant":"default"}
+      //
+      // WHY it matters that we write it too (#1038 review): a PROGRAMMATIC
+      // submission takes its selection from this row, so an imported session
+      // whose row had no variant answered the next prompt at the model's
+      // default effort even though every message we imported said `max`. The
+      // reviewer reproduced that against the 1.18.30 binary.
+      model: {
+        id: options.model,
+        providerID: options.modelProvider,
+        variant: options.modelVariant ?? 'default',
+      },
       version: options.cliVersion,
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
