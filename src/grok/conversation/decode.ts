@@ -2,6 +2,7 @@ import type { ConversationContent, ConversationDocument, ConversationEntry } fro
 import type { ConversationDecoder } from '../../conversation/decoder.js'
 import { isRecord } from '../../projection/archiveHelpers.js'
 import { isGhostRuntimeArtifact } from '../../runtimeArtifact.js'
+import { parseBase64DataUrl } from '../../dataUrl.js'
 
 /** Native chat_history.jsonl values; file/session metadata is host-owned. */
 export function decodeGrokConversation(
@@ -91,8 +92,15 @@ export const grokConversationDecoder: ConversationDecoder<'grok', Record<string,
 function imageContent(url: string): Extract<ConversationContent, { kind: 'image' }> {
   // User images and tool-result images use the same existing neutral carrier;
   // copying Grok's {type:image,url} into another provider's content is invalid.
-  const data = /^data:([^;,]+);base64,([\s\S]*)$/.exec(url)
+  //
+  // WHY the shared parser and not a local regex: this used to carry its own
+  // `[^;,]+`, which refuses a legal `data:;base64,…`. The refusal fell through
+  // to the `{ type: 'url' }` carrier below, and `claudeAttachmentBlock` copies
+  // a carrier it recognises through VERBATIM and reports it preserved — so a
+  // `data:` URL ended up as `source.type: 'url'` inside a projected Claude
+  // transcript, which the API rejects, permanently, from that turn on.
+  const data = parseBase64DataUrl(url)
   return { kind: 'image', value: { type: 'image', source: data
-    ? { type: 'base64', media_type: data[1], data: data[2] }
+    ? { type: 'base64', media_type: data.mediaType, data: data.data }
     : { type: 'url', url } } }
 }

@@ -17,6 +17,7 @@ import type {
 } from '../../projection/types.js'
 import { pairConversationTools } from '../../projection/toolPairs.js'
 import { createProjectionReport, type ProjectionChange } from '../../report/types.js'
+import { parseBase64DataUrl } from '../../dataUrl.js'
 
 const TARGET = 'claude' as const
 const CLAUDE_NATIVE_EVIDENCE: EvidenceClaim = {
@@ -560,33 +561,6 @@ function claudeAttachmentBlock(value: Record<string, unknown>): ClaudeAttachment
   }
 }
 
-/**
- * Split a `data:` URL into its declared media type and base64 payload.
- *
- * Exported because attachment handling is genuinely cross-cutting and a second
- * copy of this rule drifts from this one. Agent Code's Rewind draft had its
- * own, stricter regex (`[^;,]+`) and consequently reported a legal
- * `data:;base64,…` attachment as an external REFERENCE — "the provider
- * recorded a path instead of the bytes" — with the bytes sitting right there
- * in the string. Callers that need the same answer should use this rather
- * than write a third one.
- *
- * Returns null when the URL is not base64-encoded data; an empty media type
- * is a legal result, not a failure.
- *
- * Known limit, pinned by a test rather than fixed: media-type PARAMETERS
- * before `;base64` (`data:image/png;charset=utf-8;base64,…`) are refused
- * although RFC 2397 permits them. No provider in the corpus writes one, and
- * widening the pattern changes what `claudeAttachmentBlock` will admit into a
- * projected transcript — not a decision to make as a side effect.
- */
-export function parseBase64DataUrl(url: string): { mediaType: string; data: string } | null {
-  // Anchored and linear so a 700k-character payload (the recorded size) costs
-  // one pass; the media type stops at the first `;` or `,` per RFC 2397.
-  const match = /^data:([^;,]*);base64,([\s\S]*)$/.exec(url)
-  if (!match) return null
-  return { mediaType: match[1] ?? '', data: match[2] ?? '' }
-}
 
 function invalidClaudeToolPairEntries(
   entries: readonly ConversationEntry[],
