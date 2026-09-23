@@ -116,7 +116,12 @@ export function compactionPortability(
   // Codex writes provider-authenticated encrypted replacement history. Every
   // host application needs the same answer before it decides which live step
   // to execute.
-  return sourceProvider === 'claude'
+  //
+  // Pi belongs with Claude: its `compaction` row stores the model-written
+  // summary as plaintext (session-manager.ts CompactionEntry.summary), and the
+  // Pi decoder places that entry ahead of the rows it keeps, so the neutral
+  // slice after it is exactly the context Pi itself would send.
+  return sourceProvider === 'claude' || sourceProvider === 'pi'
     ? { nativeSummaryIsPortable: true, requiresPlaintextHandoffTurn: false }
     : { nativeSummaryIsPortable: false, requiresPlaintextHandoffTurn: true }
 }
