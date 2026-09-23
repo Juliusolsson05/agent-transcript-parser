@@ -90,3 +90,16 @@ it('pi resumes a projected compacted session from the summary plus the rows Pi k
   expect(texts[0]).toMatch(/^The conversation history before this point was compacted into the following summary:\n\n<summary>\nReply to a 1050-character prompt\./)
   expect(texts.slice(1)).toEqual(['Reply to a 16-character prompt.', 'after compaction [probe:c4]', expect.stringMatching(/^Reply to/), 'continue'])
 })
+
+it('an empty projected session (a duplicated fresh pane) opens, and the first turn appends to it', context => {
+  if (process.env.PI_PARSER_LIVE !== '1') context.skip('Set PI_PARSER_LIVE=1 (and PI_BINARY) for the installed-CLI resume gate')
+  const binary = process.env.PI_BINARY ?? 'pi'
+  const empty: ConversationDocument = { schemaVersion: 1, sourceProvider: 'pi', sourceSessionIds: ['fresh'], entries: [] }
+  const { run, contexts, projected, after } = runProjected(binary, empty, 'first words')
+  expect(run.status, run.stderr).toBe(0)
+  expect(run.stderr).not.toContain('No project session found')
+  expect(projected.map(row => row.type)).toEqual(['session', 'custom'])
+  expect(contexts[0]!.filter(message => message.role !== 'system').map(text)).toEqual(['first words'])
+  expect(after.slice(0, 2)).toEqual(projected)
+  expect(after.some(row => row.parentId === projected[1]!.id)).toBe(true)
+})
