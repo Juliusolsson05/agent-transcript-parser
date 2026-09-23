@@ -6,13 +6,14 @@ Part of Agent Code #1132 (Pi as a terminal-only provider), Stage 10 of
 
 ## Contract
 
-Add Pi (`@earendil-works/pi-coding-agent` 0.87.1, source
-earendil-works/pi@96724621) as one decoder plus one archive projector and one
+Add Pi (`@earendil-works/pi-coding-agent` 0.87.1) as one decoder plus one archive projector and one
 native-resume projector. It goes through the existing provider-neutral document,
 the same archive/native-resume contracts and the same loss reports. No pairwise
 converters. No import of `pi-terminal-headless`: the parser stays browser-safe
 and I/O-free, so the few Pi session rules it needs are restated here from the
-pinned source, not shared with the runtime package.
+SHIPPED 0.87.1 dist (`dist/core/*.js`), not shared with the runtime package.
+A source checkout of main is not the oracle: it is newer than the release, and
+its summary wrappers already differ by a newline (caught by the live test).
 
 ### Decoder: the conversation Pi itself would send
 
