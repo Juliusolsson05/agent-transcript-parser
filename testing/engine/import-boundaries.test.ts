@@ -32,7 +32,7 @@ describe('engine import boundaries', () => {
         if (specifier.includes('/ghost') || specifier.includes('agent-code')) {
           failures.push(`${path} crosses the frozen host/ghost boundary via ${specifier}`)
         }
-        const providers = ['claude', 'codex', 'opencode', 'grok']
+        const providers = ['claude', 'codex', 'opencode', 'grok', 'pi']
         const owner = providers.find(provider => path.startsWith(`${provider}/`))
         if (owner && providers.some(provider => provider !== owner && specifier.includes(`/${provider}/`))) {
           failures.push(`${path} imports another provider through ${specifier}`)
@@ -40,7 +40,7 @@ describe('engine import boundaries', () => {
 
         const isCompositionRoot = path === 'index.ts'
         const isProviderFile = owner !== undefined
-        if (!isCompositionRoot && !isProviderFile && /\/(?:claude|codex|opencode|grok)\//.test(specifier)) {
+        if (!isCompositionRoot && !isProviderFile && /\/(?:claude|codex|opencode|grok|pi)\//.test(specifier)) {
           failures.push(`${path} is provider-neutral but imports ${specifier}`)
         }
       }
