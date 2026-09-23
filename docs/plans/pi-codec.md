@@ -44,8 +44,9 @@ conversation. So the decoder decodes exactly what Pi's
    - toolResult → tool-result (`isError`);
    - `bashExecution` → user text via `bashExecutionToText`, or opaque when
      `excludeFromContext` (`!!`);
-   - custom / custom_message → developer context;
-   - branch_summary → developer context with Pi's exact prefix and suffix.
+   - custom / custom_message → user-role context, as convertToLlm sends it
+     (a developer role would be dropped by the Claude target);
+   - branch_summary → user-role context with Pi's exact prefix and suffix.
 6. Aborted and errored assistant replies are opaque. Pi's `transformMessages`
    never replays them, and a switched-to provider must not receive half an
    answer as a finished one.
@@ -75,6 +76,9 @@ conversation. So the decoder decodes exactly what Pi's
   is user-level context and never Pi's system prompt.
 - A Pi source row whose decoded meaning is unchanged is re-emitted natively
   (tool `details`, bash rows, custom messages, branch summaries) with new ids.
+  For a Pi target this includes the state pi restores on open: tool-loadout
+  `system` rows (except those in a compaction's kept range), model and
+  thinking-level changes, and aborted/errored replies.
 - Images must be base64 (`{type:'image', data, mimeType}`). URL images have no
   Pi representation and are dropped with a report entry.
 

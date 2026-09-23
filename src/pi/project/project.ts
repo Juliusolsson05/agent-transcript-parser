@@ -67,6 +67,9 @@ const IMPORTED_MODEL = { api: 'agent-code-import', provider: 'agent-code-import'
 // every assistant message, so an absent object would be a crash, not a zero.
 const ZERO_USAGE = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } }
 
+/** Opaque Pi rows a Pi target restores on open (see projectEntries). */
+const PI_STATE_ROWS = new Set(['pi.system', 'pi.model_change', 'pi.thinking_level_change', 'pi.assistant.aborted', 'pi.assistant.error'])
+
 /** session-manager.ts assertValidSessionId. */
 const PI_SESSION_ID = /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/
 
@@ -151,6 +154,7 @@ function projectEntries(
   // otherwise only the host's own records would say.
   append('custom', { customType: 'agent-code.import', data: { sourceProvider: conversation.sourceProvider, sourceSessionIds: conversation.sourceSessionIds } }, undefined, -1, false)
 
+  let lastCompactionLine = -1
   const pairing = pairConversationTools(conversation.entries)
   // A tool cycle whose result lands after a new user turn or a compaction is
   // not a cycle Pi can replay. transformMessages closes the call with a
@@ -256,6 +260,29 @@ function projectEntries(
       continue
     }
 
+    // Pi's own bookkeeping rows carry state pi restores ON OPEN:
+    //   - `system` rows: the tool loadout (_restoreToolsFromTranscript returns
+    //     early without one, so a duplicate would come back on the default
+    //     tools, a removed `bash` included);
+    //   - model_change / thinking_level_change: the session's model and
+    //     thinking level;
+    //   - aborted and errored replies: shown by the TUI, and never replayed
+    //     (transformMessages skips them at send time).
+    // They are opaque to every OTHER target, but for a Pi target an unchanged
+    // row goes back as itself. A system row from a compaction's kept range
+    // stays out: Pi never sends one (buildContextEntries), and placed after
+    // the compaction it would shadow the compaction's newer snapshot.
+    if (entry.kind === 'compaction') lastCompactionLine = entry.source.line
+    if (entry.kind === 'opaque' && profile === 'native-resume' && entry.source.provider === 'pi' && PI_STATE_ROWS.has(entry.nativeType ?? '')
+      && !(entry.nativeType === 'pi.system' && entry.source.line < lastCompactionLine)
+      && isNativeUnchanged([entry], entry.source.raw)) {
+      const native = nativeRow(entry, undefined)
+      if (native) {
+        append(native.type, native.body, entry, index)
+        note('preserved', 'native.state-preserved', 'Re-emitted Pi session state (tool loadout, model, thinking level, or a non-replayed reply) that pi restores on open.')
+        continue
+      }
+    }
     if (entry.kind === 'opaque') {
       if (profile === 'archive') {
         append('custom', { customType: 'atp_archive', data: archiveProvenance(entry, maxSourceBytes) }, entry, index, false)

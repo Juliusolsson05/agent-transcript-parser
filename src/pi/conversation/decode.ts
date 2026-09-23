@@ -146,14 +146,17 @@ export function decodePiRow(row: Record<string, unknown>): PiDecodedEntry[] {
   if (type === 'branch_summary') {
     // sessionEntryToContextMessages skips an empty summary entirely.
     if (typeof row.summary !== 'string' || !row.summary) return [{ kind: 'opaque', nativeType: 'pi.branch_summary.empty' }]
-    // NOT a compaction: rows before it on the path are still sent. It is
-    // context Pi composed, so it is developer context, not the user's words.
-    return [{ kind: 'message', role: 'developer', content: [{ kind: 'text', text: BRANCH_SUMMARY_PREFIX + row.summary + BRANCH_SUMMARY_SUFFIX }] }]
+    // NOT a compaction: rows before it on the path are still sent. Pi sends
+    // it to its model as a USER message (messages.js convertToLlm), and
+    // decoding it the same way is what keeps it for every target: Claude's
+    // native projector drops developer messages, which would silently lose
+    // the summary Pi's model saw.
+    return [{ kind: 'message', role: 'user', content: [{ kind: 'text', text: BRANCH_SUMMARY_PREFIX + row.summary + BRANCH_SUMMARY_SUFFIX }] }]
   }
   if (type === 'custom_message') {
     // Extension-injected (pi.sendMessage). convertToLlm sends it as a user
-    // message, but the user did not type it, so it is developer context.
-    return [{ kind: 'message', role: 'developer', content: userContent(row.content ?? []) }]
+    // message, and so does the decoder, for the reason given above.
+    return [{ kind: 'message', role: 'user', content: userContent(row.content ?? []) }]
   }
   // Header-adjacent bookkeeping, extension state (`custom`), labels, names,
   // usage, context_edit rows themselves: never model context.
@@ -211,7 +214,8 @@ function decodeMessage(message: Record<string, unknown>): PiDecodedEntry[] {
   if (role === 'custom' || role === 'hookMessage') {
     // `hookMessage` is v2's name for `custom` (normalizeRows renames it too;
     // accepting both keeps decodePiRow total for the projector's re-check).
-    return [{ kind: 'message', role: 'developer', content: userContent(message.content ?? []) }]
+    // A user message in Pi's context (convertToLlm), like custom_message.
+    return [{ kind: 'message', role: 'user', content: userContent(message.content ?? []) }]
   }
   // `system` is Pi's own snapshot of its system prompt: provider policy, never
   // carried into another provider as instructions (the Grok and Claude

@@ -33,7 +33,8 @@ describe('recorded Pi conversation semantics', () => {
     expect(document.sourceProvider).toBe('pi')
     expect(document.sourceSessionIds).toEqual([rows[0]!.id])
     const users = branch.filter(row => row.type === 'message' && row.message.role === 'user').map(textOf)
-    expect(messageTexts(document.entries, 'user')).toEqual(users)
+    // The typed prompts (the branch summary is user-role context too, below).
+    expect(messageTexts(document.entries.filter(entry => entry.source.raw.type === 'message'), 'user')).toEqual(users)
     // Compared by ROW, not by text: the forked prompt on this branch starts
     // with the abandoned first prompt's text (Pi puts it back in the editor).
     const abandoned = rows.filter(row => row.type !== 'session' && !branch.includes(row))
@@ -44,7 +45,7 @@ describe('recorded Pi conversation semantics', () => {
     // BRANCH_SUMMARY_*; main's source has one newline less).
     const summaryRow = branch.find(row => row.type === 'branch_summary')!
     expect(document.entries).toContainEqual(expect.objectContaining({
-      kind: 'message', role: 'developer',
+      kind: 'message', role: 'user',
       content: [{ kind: 'text', text: `The following is a summary of a branch that this conversation came back from:\n\n<summary>\n${summaryRow.summary}</summary>` }],
     }))
   })
@@ -209,7 +210,7 @@ describe('recorded Pi conversation semantics', () => {
     // The v1 file's empty first reply was an abort (stopReason 'aborted').
     expect(v1.entries[2]).toMatchObject({ kind: 'opaque', nativeType: 'pi.assistant.aborted' })
     const v2 = decodePiConversation(load('v2-hook-message'))
-    expect(v2.entries.find(entry => entry.source.raw.message?.role === 'hookMessage')).toMatchObject({ kind: 'message', role: 'developer', content: [{ kind: 'text' }] })
+    expect(v2.entries.find(entry => entry.source.raw.message?.role === 'hookMessage')).toMatchObject({ kind: 'message', role: 'user', content: [{ kind: 'text' }] })
   })
 
   it('refuses a file that is not a Pi session instead of inventing one', () => {

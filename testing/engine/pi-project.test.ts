@@ -57,6 +57,30 @@ describe('Pi target projection', () => {
     expect(values[1]).toMatchObject({ type: 'custom', customType: 'agent-code.import', data: { sourceProvider: 'pi', sourceSessionIds: [rows[0]!.id] } })
   })
 
+  it('a Pi duplicate keeps what pi restores on open: tool loadout, model, thinking level, and its non-replayed replies', () => {
+    const rows = load('abort')
+    const values = projectPiNativeResume(decodePiConversation(rows), options).values
+    const types = (list: Row[]) => list.filter(row => row.type !== 'session' && row.type !== 'custom').map(row => row.type === 'message' ? `message:${row.message.role}:${row.message.stopReason ?? ''}` : row.type)
+    // Same rows, same order as pi's own branch, minus only the header.
+    expect(types(values as Row[])).toEqual(types(rows))
+    const aborted = values.filter(row => (row.message as Row | undefined)?.stopReason === 'aborted')
+    expect(aborted).toHaveLength(2)
+    // A FOREIGN target still never receives them as speech.
+    expect(decodePiConversation(values).entries.filter(entry => entry.kind === 'message' && entry.role === 'assistant')).toHaveLength(1)
+  })
+
+  it('a system row from a compaction’s kept range is not re-emitted after the compaction', () => {
+    const rows = load('compaction')
+    const compaction = rows.find(row => row.type === 'compaction')!
+    // A loadout row inside the kept range (between firstKept and the compaction).
+    const kept = rows.find(row => row.id === compaction.firstKeptEntryId)!
+    const system = { ...rows.find(row => row.message?.role === 'system')!, id: 'sys00001', parentId: kept.id }
+    const edited = rows.flatMap(row => row === compaction ? [system, { ...row, parentId: system.id }] : [row])
+    const values = projectPiNativeResume(decodePiConversation(edited), options).values as Row[]
+    const compactionAt = values.findIndex(row => row.type === 'compaction')
+    expect(values.slice(compactionAt).some(row => row.message?.role === 'system')).toBe(false)
+  })
+
   it('only the active branch is written; its branch summary still resolves', () => {
     const rows = load('tree')
     const values = projectPiNativeResume(decodePiConversation(rows), options).values
