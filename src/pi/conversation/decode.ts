@@ -93,11 +93,14 @@ export function decodePiConversation(records: readonly Record<string, unknown>[]
   const edits = new Map<string, PiRow>()
   for (const { row } of order.slice(contextStart)) if (row.type === 'context_edit' && typeof row.targetId === 'string') edits.set(row.targetId, row)
 
-  for (const { row, superseded } of order) {
+  for (const [position, { row, superseded }] of order.entries()) {
     const source: ConversationSource = { provider: 'pi', line: row.line, raw: records[row.line]!, evidence: [] }
     const base = { timestamp: stringOrNull(row.timestamp), source }
     if (superseded) { entries.push({ kind: 'opaque', nativeType: 'pi.compaction.superseded', ...base }); continue }
-    const edit = edits.get(row.id)
+    // Edits change only what Pi sends. A summarized row is not sent at all,
+    // so an in-context edit that targets one changes nothing in Pi, and it
+    // must not rewrite that row's history here either.
+    const edit = position >= contextStart ? edits.get(row.id) : undefined
     if (edit && edit.replacement === null && isEditable(row)) {
       entries.push({ kind: 'opaque', nativeType: 'pi.context-edit.removed', ...base })
       continue
@@ -132,8 +135,13 @@ export function decodePiRow(row: Record<string, unknown>): PiDecodedEntry[] {
     // Plaintext, authored by the model Pi used for compaction and wrapped by
     // messages.ts at send time. The neutral summary stays unwrapped, like the
     // Claude carrier, so a target applies its own framing once.
-    const summary = typeof row.summary === 'string' ? row.summary : ''
-    return [{ kind: 'compaction', summary, summarySource: 'carrier' }]
+    //
+    // Deliberately NOT decoded: the row's `systemMessage`, the system-prompt
+    // snapshot Pi re-sends ahead of the summary (sessionEntryToContextMessages
+    // returns [systemMessage, summary]). It is Pi's own policy, which the
+    // `pi.system` rows are kept out for too. It stays in source.raw, so the
+    // same-provider archive and a verbatim Pi re-emission keep it.
+    return [{ kind: 'compaction', summary: typeof row.summary === 'string' ? row.summary : '', summarySource: 'carrier' }]
   }
   if (type === 'branch_summary') {
     // sessionEntryToContextMessages skips an empty summary entirely.
@@ -294,6 +302,17 @@ function normalizeRows(records: readonly Record<string, unknown>[]): { header: R
     let row: PiRow = version < 2 || typeof raw.id !== 'string'
       ? { ...raw, id: `v1-${line}`, parentId: previous, line }
       : { ...raw, id: raw.id, parentId: typeof raw.parentId === 'string' ? raw.parentId : null, line }
+    // v1 compactions name their kept range by POSITION. migrateV1ToV2
+    // resolves `entries[firstKeptEntryIndex]` (header at index 0) to that
+    // entry's new id, and only when the target was already given one (an
+    // earlier, non-header entry). Without this, every v1 compaction would
+    // decode as "keep nothing", and the neutral slice would drop rows Pi
+    // itself re-sends.
+    if (version < 2 && row.type === 'compaction' && typeof raw.firstKeptEntryIndex === 'number') {
+      const index = headerLine + raw.firstKeptEntryIndex
+      const target = records[index]
+      row = { ...row, firstKeptEntryId: index > headerLine && index < line && isRecord(target) && target.type !== 'session' ? `v1-${index}` : undefined }
+    }
     if (version < PI_SESSION_VERSION && row.type === 'message' && isRecord(row.message) && row.message.role === 'hookMessage') {
       row = { ...row, message: { ...row.message, role: 'custom' } }
     }

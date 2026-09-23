@@ -136,6 +136,27 @@ describe('recorded Pi conversation semantics', () => {
     expect(document.entries).toContainEqual(expect.objectContaining({ kind: 'opaque', nativeType: 'pi.compaction.superseded' }))
   })
 
+  it('a v1 compaction keeps the rows its firstKeptEntryIndex names, as Pi’s own migration resolves it', () => {
+    const header = { type: 'session', id: 'v1c', timestamp: '2025-11-20T00:00:00.000Z', cwd: '/p' }
+    const user = (text: string) => ({ type: 'message', timestamp: '2025-11-20T00:00:01.000Z', message: { role: 'user', content: [{ type: 'text', text }] } })
+    const reply = (text: string) => ({ type: 'message', timestamp: '2025-11-20T00:00:02.000Z', message: { role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop' } })
+    // entries[3] (header at 0) is the kept prompt: migrateV1ToV2 turns the
+    // index into that entry's id, and buildContextEntries re-sends from there.
+    const rows = [header, user('old prompt'), reply('old reply'), user('kept prompt'), reply('kept reply'),
+      { type: 'compaction', timestamp: '2025-11-20T00:00:03.000Z', summary: 'S', firstKeptEntryIndex: 3, tokensBefore: 10 }, user('after prompt')]
+    const after = conversationAfterLatestPortableCompaction(decodePiConversation(rows))
+    expect(messageTexts(after.entries, 'user')).toEqual(['kept prompt', 'after prompt'])
+    expect(messageTexts(after.entries, 'assistant')).toEqual(['kept reply'])
+  })
+
+  it('an in-context edit that targets a summarized row changes nothing, because Pi never sends that row', () => {
+    const rows = load('compaction')
+    const firstUser = rows.find(row => row.message?.role === 'user')!
+    const edit = { type: 'context_edit', id: 'e0000009', parentId: rows.at(-1)!.id, timestamp: rows.at(-1)!.timestamp, targetId: firstUser.id, replacement: null }
+    const document = decodePiConversation([...rows, edit])
+    expect(document.entries.find(entry => entry.source.raw === firstUser)).toMatchObject({ kind: 'message', role: 'user' })
+  })
+
   it('Pi’s own system prompt snapshot and bookkeeping rows are opaque evidence, never speech', () => {
     const document = decodePiConversation(load('tool'))
     const opaqueTypes = document.entries.filter(entry => entry.kind === 'opaque').map(entry => (entry as { nativeType: string }).nativeType)
@@ -167,9 +188,10 @@ describe('recorded Pi conversation semantics', () => {
     const splice = (at: Row) => rows.flatMap(row => row === firstKept ? [at, { ...row, parentId: at.id }] : [row])
     const document = decodePiConversation(splice(edit))
     expect(document.entries.find(entry => entry.source.raw === firstUser)).toMatchObject({ kind: 'message', role: 'user' })
-    // The same edit placed after the kept row is in context and applies.
-    const kept = rows.flatMap(row => row === compaction ? [{ ...edit, parentId: row.parentId }, { ...row, parentId: edit.id }] : [row])
-    expect(decodePiConversation(kept).entries.find(entry => entry.source.raw === firstUser)).toMatchObject({ kind: 'opaque', nativeType: 'pi.context-edit.removed' })
+    // An edit in context that targets a KEPT row (one Pi re-sends) applies.
+    const keptEdit = { ...edit, targetId: firstKept.id, parentId: compaction.parentId }
+    const inContext = rows.flatMap(row => row === compaction ? [keptEdit, { ...row, parentId: keptEdit.id }] : [row])
+    expect(decodePiConversation(inContext).entries.find(entry => entry.source.raw === firstKept)).toMatchObject({ kind: 'opaque', nativeType: 'pi.context-edit.removed' })
   })
 
   it('user images become the neutral base64 carrier', () => {
