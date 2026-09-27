@@ -83,6 +83,23 @@ describe('Claude probe launch policy', () => {
   // `statusLine: {type:'command', command: ...}` runs that command when the
   // prompt footer mounts, even under --bare. The probe's gate must refuse
   // before launch whenever such a policy file is present, and must name it.
+  // Round 3 of #37 (q50): removing the macOS device plist or the Linux drop-in
+  // directory from the candidate list passed every test above. Each source
+  // Claude merges from outside the probe's roots is pinned on its own, so
+  // deleting any single one fails (vendor utils/settings/managedPath.ts and
+  // utils/settings/mdm/constants.ts).
+  it.each([
+    ['darwin', '/Library/Application Support/ClaudeCode/managed-settings.json'],
+    ['darwin', '/Library/Application Support/ClaudeCode/managed-settings.d'],
+    ['darwin', '/Library/Managed Preferences/dev/com.anthropic.claudecode.plist'],
+    ['darwin', '/Library/Managed Preferences/com.anthropic.claudecode.plist'],
+    ['linux', '/etc/claude-code/managed-settings.json'],
+    ['linux', '/etc/claude-code/managed-settings.d'],
+  ] as const)('refuses on %s when only %s exists', (platform, source) => {
+    expect(managedPolicySources(platform, 'dev', path => path === source)).toEqual([source])
+    expect(() => assertNoMachinePolicy(platform, 'dev', path => path === source)).toThrow(source)
+  })
+
   it('the pre-launch gate refuses a machine policy that could run a statusLine command', () => {
     const policy = '/Library/Application Support/ClaudeCode/managed-settings.json'
     const policyContents: Record<string, string> = {
