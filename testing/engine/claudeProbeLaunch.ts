@@ -186,3 +186,66 @@ export function watchExit(terminal: Killable): { stop(graceMs?: number, killMs?:
     },
   }
 }
+
+/** The two process launches the probe makes; injected so the core tests can observe them. */
+export type ProbeSpawners<Terminal extends Killable> = {
+  spawnSync(
+    binary: string,
+    args: string[],
+    options: { encoding: 'utf8'; env: Record<string, string> },
+  ): { status: number | null; stdout: string; stderr: string }
+  spawnPty(
+    binary: string,
+    args: string[],
+    options: { name: string; cols: number; rows: number; cwd: string; env: Record<string, string> },
+  ): Terminal
+}
+
+/**
+ * Every process the probe starts, with the probe env built HERE and nowhere else.
+ *
+ * WHY the launches live in this module (review of #37, b's verification pass): the env policy was
+ * tested, but the live file's two call sites were not. Dropping `{ env }` from the `--version`
+ * spawn, or spreading `process.env` into it, gave the child the parent's API key and OAuth token
+ * while every core test and the live history check stayed green. Here the caller never holds the
+ * env at all, so there is nothing to drop or widen at a call site, and the core tests drive both
+ * launches with a stand-in binary.
+ *
+ * WHY `withTerminal` owns the exit wait: the live test's `stopped = await exit.stop()` could be
+ * reduced to a fire-and-forget stop, and the probe root was removed while the CLI was still
+ * shutting down, which recreated it afterwards. The helper resolves only after the stop settles.
+ */
+export function createClaudeProbe<Terminal extends Killable>(
+  binary: string,
+  parent: NodeJS.ProcessEnv,
+  roots: ProbeRoots,
+  spawners: ProbeSpawners<Terminal>,
+) {
+  const env = claudeProbeEnv(parent, roots)
+  return {
+    version(): { status: number | null; stdout: string; stderr: string } {
+      return spawners.spawnSync(binary, ['--version'], { encoding: 'utf8', env })
+    },
+    async withTerminal<T>(
+      sessionId: string,
+      cwd: string,
+      body: (terminal: Terminal) => Promise<T>,
+      stopTimings?: { graceMs?: number; killMs?: number },
+    ): Promise<{ result?: T; error?: unknown; stopped: 'exited' | 'killed' | 'stuck' }> {
+      const terminal = spawners.spawnPty(binary, claudeProbeArgs(sessionId), {
+        name: 'xterm-256color', cols: 160, rows: 50, cwd, env,
+      })
+      // Subscribed before anything else can throw, so a fast exit is never missed.
+      const exit = watchExit(terminal)
+      let result: T | undefined
+      let error: unknown
+      try {
+        result = await body(terminal)
+      } catch (cause) {
+        error = cause
+      }
+      const stopped = await exit.stop(stopTimings?.graceMs, stopTimings?.killMs)
+      return error === undefined ? { result, stopped } : { error, stopped }
+    },
+  }
+}

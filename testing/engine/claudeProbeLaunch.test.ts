@@ -1,6 +1,11 @@
+import { spawnSync } from 'node:child_process'
+import { chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
-import { PROBE_ENV_ALLOWLIST, assertNoMachinePolicy, claudeProbeArgs, claudeProbeEnv, managedPolicySources, watchExit } from './claudeProbeLaunch.js'
+import { PROBE_ENV_ALLOWLIST, assertNoMachinePolicy, claudeProbeArgs, claudeProbeEnv, createClaudeProbe, managedPolicySources, watchExit } from './claudeProbeLaunch.js'
 
 // WHY a deterministic test for a live probe's launch policy (agent-code#1295,
 // steering q44): the live probe is opt-in and skipped everywhere else, so its
@@ -165,3 +170,79 @@ describe('bounded probe exit', () => {
     expect(terminal.signals).toEqual([])
   })
 })
+
+// Review of #37, b's verification pass: the env policy was pinned, but the live file's two launch
+// call sites were not — dropping `{ env }` from the version spawn, or spreading process.env into it,
+// handed the parent's credentials to the child with every test green. The launches now live in
+// createClaudeProbe; these drive them with a REAL stand-in binary (a shell script that reports what
+// it was given), so the process boundary itself is what is asserted.
+describe.skipIf(process.platform === 'win32')('probe launches', () => {
+  const hostile = {
+    PATH: process.env.PATH,
+    ANTHROPIC_API_KEY: 'sk-ant-synthetic',
+    CLAUDE_CODE_OAUTH_TOKEN: 'synthetic-oauth',
+    CLAUDE_CONFIG_DIR: '/real/home/.claude',
+  }
+
+  async function standIn(): Promise<{ bin: string; roots: { configRoot: string; home: string; tmp: string }; cleanup(): Promise<void> }> {
+    const root = await mkdtemp(join(tmpdir(), 'atp-probe-standin-'))
+    const bin = join(root, 'claude')
+    await writeFile(bin, '#!/bin/sh\nprintf "key=%s oauth=%s config=%s\\n" "${ANTHROPIC_API_KEY:-none}" "${CLAUDE_CODE_OAUTH_TOKEN:-none}" "${CLAUDE_CONFIG_DIR:-none}"\n')
+    await chmod(bin, 0o755)
+    const roots = { configRoot: join(root, 'config'), home: join(root, 'home'), tmp: join(root, 'tmp') }
+    return { bin, roots, cleanup: () => rm(root, { recursive: true, force: true }) }
+  }
+
+  it('runs --version with the probe env, never the parent credentials', async () => {
+    const { bin, roots, cleanup } = await standIn()
+    try {
+      const probe = createClaudeProbe(bin, hostile, roots, {
+        spawnSync: (binary, args, options) => spawnSync(binary, args, options),
+        spawnPty: () => { throw new Error('not used') },
+      })
+      const result = probe.version()
+      expect(result.status).toBe(0)
+      expect(result.stdout.trim()).toBe(`key=none oauth=none config=${roots.configRoot}`)
+    } finally {
+      await cleanup()
+    }
+  })
+
+  it('spawns the terminal with the probe env and bare args, and waits for its exit before returning', async () => {
+    const seen: Array<{ args: string[]; env: Record<string, string> }> = []
+    const terminal = fakeTerminal(new Set())
+    const probe = createClaudeProbe('claude', hostile, { configRoot: '/probe/config', home: '/probe/home', tmp: '/probe/tmp' }, {
+      spawnSync: () => { throw new Error('not used') },
+      spawnPty: (_binary, args, options) => {
+        seen.push({ args, env: options.env })
+        return terminal
+      },
+    })
+    let settled = false
+    const running = probe.withTerminal('00000000-0000-4000-8000-000000000215', '/probe/workspace', async () => 'rendered', { graceMs: 20, killMs: 20 })
+      .then(run => { settled = true; return run })
+    // The CLI has not exited yet: the run must not have returned, or cleanup would race its writes.
+    await new Promise(resolveWait => setTimeout(resolveWait, 10))
+    expect(settled).toBe(false)
+    terminal.exitNow()
+    await expect(running).resolves.toEqual({ result: 'rendered', stopped: 'exited' })
+    expect(seen).toHaveLength(1)
+    expect(seen[0]!.args).toEqual(claudeProbeArgs('00000000-0000-4000-8000-000000000215'))
+    expect(seen[0]!.env.ANTHROPIC_API_KEY).toBeUndefined()
+    expect(seen[0]!.env.CLAUDE_CODE_OAUTH_TOKEN).toBeUndefined()
+    expect(seen[0]!.env.CLAUDE_CONFIG_DIR).toBe('/probe/config')
+  })
+
+  it('still waits for the exit when the body throws, and hands the error back', async () => {
+    const terminal = fakeTerminal(new Set([undefined]))
+    const probe = createClaudeProbe('claude', hostile, { configRoot: '/c', home: '/h', tmp: '/t' }, {
+      spawnSync: () => { throw new Error('not used') },
+      spawnPty: () => terminal,
+    })
+    const run = await probe.withTerminal('00000000-0000-4000-8000-000000000215', '/w', async () => { throw new Error('history never rendered') }, { graceMs: 50, killMs: 50 })
+    expect(run.stopped).toBe('exited')
+    expect(String(run.error)).toMatch(/history never rendered/)
+    expect(terminal.signals).toEqual([undefined])
+  })
+})
+

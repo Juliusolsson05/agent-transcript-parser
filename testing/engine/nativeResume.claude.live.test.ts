@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 
 import { projectClaudeNativeResume } from '../../src/claude/project/nativeResume.js'
 import type { ConversationDocument } from '../../src/conversation/types.js'
-import { assertNoMachinePolicy, claudeProbeArgs, claudeProbeEnv, watchExit } from './claudeProbeLaunch.js'
+import { assertNoMachinePolicy, createClaudeProbe } from './claudeProbeLaunch.js'
 
 const enabled = process.env.ATP_RUN_NATIVE_CLAUDE === '1'
 const claudeBinary = process.env.ATP_CLAUDE_BIN ?? 'claude'
@@ -40,10 +40,13 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
       const home = join(probeRoot, 'home')
       const tmp = join(probeRoot, 'tmp')
       await Promise.all([cwd, configRoot, home, tmp].map(dir => mkdir(dir, { mode: 0o700 })))
-      const env = claudeProbeEnv(process.env, { configRoot, home, tmp })
-      // Even `--version` gets the probe env: nothing launched by this test sees
-      // the parent's credentials.
-      const versionResult = spawnSync(claudeBinary, ['--version'], { encoding: 'utf8', env })
+      // Every launch goes through the probe, which builds the allowlisted env
+      // itself: this file never holds an env it could widen (review of #37).
+      const probe = createClaudeProbe(claudeBinary, process.env, { configRoot, home, tmp }, {
+        spawnSync: (binary, args, options) => spawnSync(binary, args, options),
+        spawnPty: (binary, args, options) => pty.spawn(binary, args, options),
+      })
+      const versionResult = probe.version()
       expect(versionResult.status, versionResult.stderr).toBe(0)
       const version = versionResult.stdout.trim().split(/\s+/)[0] ?? 'unknown'
       // WHY storage uses the canonical path while the PTY may accept its alias:
@@ -93,22 +96,13 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
       // strongest network-free check is therefore its real interactive resume
       // path: open a PTY without submitting a prompt and require both projected
       // turns to appear.
-      const terminal = pty.spawn(claudeBinary, claudeProbeArgs(sessionId), {
-        name: 'xterm-256color',
-        cols: 160,
-        rows: 50,
-        cwd,
-        env,
-      })
-      // Subscribed before anything else can throw, so a fast exit is never missed.
-      const exit = watchExit(terminal)
-      try {
+      const run = await probe.withTerminal(sessionId, cwd, async terminal => {
         const output = await waitForHistory(terminal)
         expect(output).toContain('ATP_CLAUDE_PROMPT_215')
         expect(output).toContain('ATP_CLAUDE_ANSWER_215')
-      } finally {
-        stopped = await exit.stop()
-      }
+      })
+      stopped = run.stopped
+      if (run.error !== undefined) throw run.error
     } finally {
       if (canary !== undefined) helperRan = existsSync(canary)
       await rm(probeRoot, { recursive: true, force: true })
