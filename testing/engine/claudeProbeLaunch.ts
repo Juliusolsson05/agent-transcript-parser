@@ -28,10 +28,12 @@ export const PROBE_ENV_ALLOWLIST: readonly string[] = [
   'LANG',
   'LC_ALL',
   'LC_CTYPE',
-  'TMPDIR',
 ]
 
 export type ProbeRoots = {
+  /** Throwaway TMPDIR, so Claude's own temp artifacts land inside the probe
+   *  root that cleanup owns, not the developer's shared temp dir (review of #37). */
+  tmp: string
   /** Throwaway CLAUDE_CONFIG_DIR (global config, projects, keychain service key). */
   configRoot: string
   /** Throwaway HOME, so home-based discovery (~/.aws, ~/.config/gcloud,
@@ -50,6 +52,7 @@ export function claudeProbeEnv(
   }
   env.TERM ??= 'xterm-256color'
   env.HOME = roots.home
+  env.TMPDIR = roots.tmp
   env.CLAUDE_CONFIG_DIR = roots.configRoot
   // Belt and braces with --bare below: SIMPLE is what --bare sets internally
   // (vendor claude-code-src/full/main.tsx), so either alone keeps bare mode.
@@ -83,6 +86,58 @@ export function claudeProbeArgs(sessionId: string): string[] {
     '--permission-mode',
     'dontAsk',
   ]
+}
+
+/**
+ * Machine-policy sources that Claude reads from OUTSIDE CLAUDE_CONFIG_DIR, and that exist here.
+ *
+ * WHY the probe refuses to run when any exists (steering q44, round 2 of #37): policy settings
+ * are merged even in bare mode, and more than one policy key runs a shell command at startup
+ * without a bare guard. `statusLine` executes when the prompt footer mounts
+ * (vendor components/StatusLine.tsx -> utils/hooks.ts executeStatusLineCommand, spawned with
+ * `shell: true`), `otelHeadersHelper` when telemetry is enabled, and policy `env` is applied at
+ * startup. Blocking each key one by one would go stale the next time Claude adds one. So the
+ * boundary is: no machine policy, or no probe. An explicit opt-in run fails loudly rather than
+ * silently skipping, because a skipped run would claim coverage it did not provide.
+ *
+ * Paths come from vendor utils/settings/managedPath.ts (file + managed-settings.d drop-ins) and
+ * utils/settings/mdm/constants.ts (per-user and device plists). Windows keeps policy in the
+ * registry (HKLM/HKCU\\SOFTWARE\\Policies\\ClaudeCode), which this probe does not read, so
+ * Windows fails closed as "unknown". The remote managed-settings cache lives in
+ * CLAUDE_CONFIG_DIR, which is throwaway, so it needs no check.
+ */
+export function managedPolicySources(
+  platform: NodeJS.Platform,
+  username: string,
+  exists: (path: string) => boolean,
+): string[] {
+  if (platform === 'win32') return ['Windows registry policy (HKLM/HKCU\\SOFTWARE\\Policies\\ClaudeCode): cannot be ruled out']
+  const candidates = platform === 'darwin'
+    ? [
+        '/Library/Application Support/ClaudeCode/managed-settings.json',
+        '/Library/Application Support/ClaudeCode/managed-settings.d',
+        `/Library/Managed Preferences/${username}/com.anthropic.claudecode.plist`,
+        '/Library/Managed Preferences/com.anthropic.claudecode.plist',
+      ]
+    : ['/etc/claude-code/managed-settings.json', '/etc/claude-code/managed-settings.d']
+  return candidates.filter(path => exists(path))
+}
+
+/**
+ * The probe's pre-launch gate: throws, naming the sources, when any machine policy exists.
+ * Called before the probe creates anything, so a refusal leaves nothing behind.
+ */
+export function assertNoMachinePolicy(
+  platform: NodeJS.Platform,
+  username: string,
+  exists: (path: string) => boolean,
+): void {
+  const sources = managedPolicySources(platform, username, exists)
+  if (sources.length > 0) {
+    throw new Error(
+      `Refusing to run the Claude probe: machine policy can execute commands outside its sandbox (${sources.join(', ')})`,
+    )
+  }
 }
 
 type Killable = {

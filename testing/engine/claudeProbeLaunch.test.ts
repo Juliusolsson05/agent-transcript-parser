@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest'
 
-import { PROBE_ENV_ALLOWLIST, claudeProbeArgs, claudeProbeEnv, watchExit } from './claudeProbeLaunch.js'
+import { PROBE_ENV_ALLOWLIST, assertNoMachinePolicy, claudeProbeArgs, claudeProbeEnv, managedPolicySources, watchExit } from './claudeProbeLaunch.js'
 
 // WHY a deterministic test for a live probe's launch policy (agent-code#1295,
 // steering q44): the live probe is opt-in and skipped everywhere else, so its
 // "no real credential reaches the child" rule would otherwise be checked by
 // nobody. These cases pin that rule and the bounded exit without Claude.
 
-const roots = { configRoot: '/probe/config', home: '/probe/home' }
+const roots = { configRoot: '/probe/config', home: '/probe/home', tmp: '/probe/tmp' }
 
 // Every credential route the review of agent-transcript-parser#37 traced to a
 // Claude startup path, plus the ones the first version already stripped. The
@@ -16,6 +16,7 @@ const HOSTILE_PARENT: NodeJS.ProcessEnv = {
   PATH: '/usr/bin:/bin',
   TERM: 'xterm-256color',
   LANG: 'en_US.UTF-8',
+  TMPDIR: '/var/folders/real/T/',
   HOME: '/Users/real-developer',
   USER: 'real-developer',
   ANTHROPIC_API_KEY: 'fixture-anthropic-key',
@@ -46,6 +47,7 @@ describe('Claude probe launch policy', () => {
       TERM: 'xterm-256color',
       LANG: 'en_US.UTF-8',
       HOME: '/probe/home',
+      TMPDIR: '/probe/tmp',
       CLAUDE_CONFIG_DIR: '/probe/config',
       CLAUDE_CODE_SIMPLE: '1',
       DISABLE_AUTOUPDATER: '1',
@@ -53,6 +55,42 @@ describe('Claude probe launch policy', () => {
     // No value from the hostile parent leaks under ANY key.
     const leaked = Object.values(env).filter(value => /fixture|real-developer|real-profile|proxy\.example/.test(value))
     expect(leaked).toEqual([])
+  })
+
+  // Review round 2 of #37: adding a credential name to the allowlist passed the
+  // env test whenever the hostile fixture happened not to contain that name. So
+  // the allowlist itself is pinned, and no entry may look like a credential.
+  it('allowlists only terminal and locale variables, none of which can carry a credential', () => {
+    expect([...PROBE_ENV_ALLOWLIST].sort()).toEqual(['LANG', 'LC_ALL', 'LC_CTYPE', 'PATH', 'TERM'])
+    for (const key of PROBE_ENV_ALLOWLIST) {
+      expect(key).not.toMatch(/TOKEN|KEY|SECRET|CREDENTIAL|PASSWORD|AUTH|PROFILE|PROXY|AWS|GOOGLE|ANTHROPIC|CLAUDE|HOME|DIR/)
+    }
+  })
+
+  it('refuses to launch when any machine-policy source exists, and on Windows', () => {
+    const policyFile = '/Library/Application Support/ClaudeCode/managed-settings.json'
+    expect(managedPolicySources('darwin', 'dev', () => false)).toEqual([])
+    expect(managedPolicySources('darwin', 'dev', path => path === policyFile)).toEqual([policyFile])
+    expect(managedPolicySources('darwin', 'dev', path => path === '/Library/Managed Preferences/dev/com.anthropic.claudecode.plist'))
+      .toHaveLength(1)
+    expect(managedPolicySources('darwin', 'dev', path => path.endsWith('managed-settings.d'))).toHaveLength(1)
+    expect(managedPolicySources('linux', 'dev', path => path === '/etc/claude-code/managed-settings.json')).toHaveLength(1)
+    expect(managedPolicySources('linux', 'dev', () => false)).toEqual([])
+    expect(managedPolicySources('win32', 'dev', () => false)).toHaveLength(1)
+  })
+
+  // Steering q50: the policy-command canary. A machine policy that sets
+  // `statusLine: {type:'command', command: ...}` runs that command when the
+  // prompt footer mounts, even under --bare. The probe's gate must refuse
+  // before launch whenever such a policy file is present, and must name it.
+  it('the pre-launch gate refuses a machine policy that could run a statusLine command', () => {
+    const policy = '/Library/Application Support/ClaudeCode/managed-settings.json'
+    const policyContents: Record<string, string> = {
+      [policy]: JSON.stringify({ statusLine: { type: 'command', command: '/usr/bin/touch /tmp/policy-canary' } }),
+    }
+    expect(() => assertNoMachinePolicy('darwin', 'dev', path => path in policyContents))
+      .toThrow(/Refusing to run the Claude probe.*managed-settings\.json/)
+    expect(() => assertNoMachinePolicy('darwin', 'dev', () => false)).not.toThrow()
   })
 
   it('launches in bare mode, where only --settings can supply an apiKeyHelper', () => {

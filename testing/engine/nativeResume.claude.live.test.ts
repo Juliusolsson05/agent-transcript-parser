@@ -1,7 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 
 import * as pty from 'node-pty'
@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest'
 
 import { projectClaudeNativeResume } from '../../src/claude/project/nativeResume.js'
 import type { ConversationDocument } from '../../src/conversation/types.js'
-import { claudeProbeArgs, claudeProbeEnv, watchExit } from './claudeProbeLaunch.js'
+import { assertNoMachinePolicy, claudeProbeArgs, claudeProbeEnv, watchExit } from './claudeProbeLaunch.js'
 
 const enabled = process.env.ATP_RUN_NATIVE_CLAUDE === '1'
 const claudeBinary = process.env.ATP_CLAUDE_BIN ?? 'claude'
@@ -27,6 +27,9 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
     // The launch policy (allowlisted env, --bare) is in claudeProbeLaunch.ts
     // and pinned by claudeProbeLaunch.test.ts. One root means one rm owns every
     // byte the probe or the CLI writes, from the first mkdtemp on.
+    // Before creating anything: a machine policy can run commands that no
+    // throwaway root contains (see managedPolicySources).
+    assertNoMachinePolicy(process.platform, userInfo().username, existsSync)
     const probeRoot = await mkdtemp(join(tmpdir(), 'atp-claude-probe-'))
     let stopped: 'exited' | 'killed' | 'stuck' | 'never-spawned' = 'never-spawned'
     let canary: string | undefined
@@ -35,8 +38,9 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
       const cwd = join(probeRoot, 'workspace')
       const configRoot = join(probeRoot, 'config')
       const home = join(probeRoot, 'home')
-      await Promise.all([cwd, configRoot, home].map(dir => mkdir(dir, { mode: 0o700 })))
-      const env = claudeProbeEnv(process.env, { configRoot, home })
+      const tmp = join(probeRoot, 'tmp')
+      await Promise.all([cwd, configRoot, home, tmp].map(dir => mkdir(dir, { mode: 0o700 })))
+      const env = claudeProbeEnv(process.env, { configRoot, home, tmp })
       // Even `--version` gets the probe env: nothing launched by this test sees
       // the parent's credentials.
       const versionResult = spawnSync(claudeBinary, ['--version'], { encoding: 'utf8', env })
