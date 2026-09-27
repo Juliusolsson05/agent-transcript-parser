@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { mkdir, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
-import { homedir, tmpdir } from 'node:os'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import * as pty from 'node-pty'
@@ -26,7 +26,21 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
     const canonicalCwd = (await realpath(cwd)).normalize('NFC')
     const sessionId = '00000000-0000-4000-8000-000000000215'
     const now = '2026-07-20T12:00:00.000Z'
-    const configRoot = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+    // WHY a throwaway CLAUDE_CONFIG_DIR instead of the developer's real ~/.claude (agent-code#1295):
+    // this probe only renders a resumed history, so it needs no login and no network. Pointing it at
+    // the real home wrote the session under ~/.claude/projects and, worse, recorded the folder-trust
+    // decision in the real ~/.claude.json `projects` map, which cleanup can never remove (six stale
+    // atp-claude-resume-* entries were found there on 2026-09-26). With a private config dir the
+    // real login is not even reachable: on macOS Claude keys its keychain entry by config dir.
+    const configRoot = await mkdtemp(join(tmpdir(), 'atp-claude-config-'))
+    // Pre-seed what the interactive CLI otherwise stops to ask (vendor claude-code-src
+    // interactiveHelpers.tsx showSetupScreens): onboarding needs a theme plus
+    // hasCompletedOnboarding, and trust is looked up by the realpath'd cwd.
+    await writeFile(join(configRoot, '.claude.json'), JSON.stringify({
+      theme: 'dark',
+      hasCompletedOnboarding: true,
+      projects: { [canonicalCwd]: { hasTrustDialogAccepted: true } },
+    }), { mode: 0o600 })
     const projectDir = join(configRoot, 'projects', sanitizePath(canonicalCwd))
     const sessionPath = join(projectDir, `${sessionId}.jsonl`)
     const projection = projectClaudeNativeResume(conversation(now), {
@@ -59,7 +73,15 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
       cols: 160,
       rows: 50,
       cwd,
-      env: process.env as Record<string, string>,
+      env: claudeProbeEnv(configRoot),
+    })
+
+    // WHY cleanup waits for the CLI to exit: Claude saves its global config
+    // (plus a backups/ copy) from its shutdown handler AFTER the kill signal.
+    // Removing the config dir right after kill() raced that save and left a
+    // recreated atp-claude-config-* dir behind (observed on the first run).
+    const exited = new Promise<void>(resolveExit => {
+      terminal.onExit(() => resolveExit())
     })
 
     try {
@@ -68,7 +90,11 @@ describe.skipIf(!enabled)('controlled Claude native-resume compatibility', () =>
       expect(output).toContain('ATP_CLAUDE_ANSWER_215')
     } finally {
       terminal.kill()
-      await rm(projectDir, { recursive: true, force: true })
+      const forceKill = setTimeout(() => terminal.kill('SIGKILL'), 5_000)
+      await exited
+      clearTimeout(forceKill)
+      // Everything the CLI wrote lives under these two throwaway roots.
+      await rm(configRoot, { recursive: true, force: true })
       await rm(cwd, { recursive: true, force: true })
     }
   }, 30_000)
@@ -101,6 +127,26 @@ function message(
   }
 }
 
+/**
+ * The parent environment minus every way Claude could pick up a real credential or real state.
+ *
+ * WHY strip instead of passing process.env through: an inherited ANTHROPIC_API_KEY (or OAuth token
+ * env) would both put a real credential in reach of the probe and raise Claude's "use this API
+ * key?" dialog, which this network-free probe has no reason to answer.
+ */
+function claudeProbeEnv(configRoot: string): Record<string, string> {
+  const env: Record<string, string> = {}
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue
+    if (/^(ANTHROPIC_|CLAUDE_CODE_OAUTH|CLAUDE_CONFIG_DIR$)/.test(key)) continue
+    env[key] = value
+  }
+  env.CLAUDE_CONFIG_DIR = configRoot
+  // A fresh config dir would otherwise let this probe start an auto-update of the real install.
+  env.DISABLE_AUTOUPDATER = '1'
+  return env
+}
+
 function sanitizePath(value: string): string {
   return value.normalize('NFC').replace(/[^a-zA-Z0-9]/g, '-').slice(0, 200)
 }
@@ -121,11 +167,11 @@ function waitForHistory(terminal: pty.IPty): Promise<string> {
         output.includes('safety') &&
         output.includes('folder')
       ) {
-        // The probe directory was created by this test and contains only the
-        // projected fixture, so selecting Claude's already-highlighted "Yes"
-        // option does not weaken trust for any real repository. Claude stores
-        // the decision under this one throwaway sanitized cwd, which cleanup
-        // removes together with the projected session file.
+        // Fallback only: the seeded config already trusts the probe cwd. If a
+        // future Claude keys trust differently, the dialog appears; accepting
+        // it is harmless because the decision now lands in the throwaway
+        // CLAUDE_CONFIG_DIR (never the real ~/.claude.json), which cleanup
+        // removes, and the probe directory holds only the projected fixture.
         trustConfirmed = true
         terminal.write('\r')
       }
